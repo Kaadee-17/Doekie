@@ -1,0 +1,574 @@
+// Doekie – fase 1. Eén bestand met alle schermen.
+(() => {
+  "use strict";
+
+  const cfg = window.DOEKIE_CONFIG || {};
+  const app = document.getElementById("app");
+  const tabbar = document.getElementById("tabbar");
+  const sheetRoot = document.getElementById("sheet-root");
+  const IMG = "https://image.tmdb.org/t/p/";
+  const EXTRA = ["Bioscoop", "Dvd / Blu-ray", "Anders"];
+  const COLORS = ["#9B5CF6", "#2CB5A0", "#E5484D", "#3E9BF0", "#F5A524", "#FF4D8D", "#5B6CFF"];
+
+  if (!cfg.supabaseUrl || cfg.supabaseUrl.includes("JOUW-PROJECT") || !window.supabase) {
+    app.innerHTML = `<div class="center"><div class="logo">doekie<span>.</span></div>
+      <p class="muted">Vul eerst je Supabase-gegevens in het bestand <b>config.js</b> in.</p></div>`;
+    return;
+  }
+
+  const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
+  const FN = cfg.supabaseUrl.replace(/\/$/, "") + "/functions/v1/tmdb";
+  const S = { session: null, me: null, providers: null, cache: new Map(), routeId: 0, ontdekMine: false, searchT: null, log: null };
+
+  // ---------- Hulpjes ----------
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const today = () => new Date().toLocaleDateString("sv-SE");
+  const yearOf = (d) => (d || "").slice(0, 4);
+  const starText = (r) => { r = Number(r) || 0; return r ? "★".repeat(Math.floor(r)) + (r % 1 ? "½" : "") : ""; };
+  const fmtDay = (d) => new Date(d + "T12:00").toLocaleDateString("nl-NL", { day: "numeric", month: "short" });
+  const ago = (iso) => {
+    const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (m < 60) return `${Math.max(1, m)} min`;
+    if (m < 1440) return `${Math.round(m / 60)} u`;
+    const d = Math.round(m / 1440);
+    return d === 1 ? "gisteren" : `${d} dagen`;
+  };
+  const colorFor = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return COLORS[h % COLORS.length]; };
+  const avatar = (p, big) => {
+    const name = p?.display_name || p?.username || "?";
+    return `<span class="avatar${big ? " big" : ""}" style="background:${colorFor(p?.username || name)}">${esc(name[0].toUpperCase())}</span>`;
+  };
+  const poster = (path, size = "w342") =>
+    path ? `<img class="poster-img" src="${IMG}${size}${esc(path)}" alt="" loading="lazy">` : `<div class="poster-ph"></div>`;
+  const icon = {
+    home: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>',
+    search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" aria-hidden="true" style="stroke-width:2.6"><path d="M12 5v14M5 12h14"/></svg>',
+    users: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"/></svg>',
+    user: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.2-6.5 8-6.5s7 2.5 8 6.5"/></svg>',
+    back: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
+    x: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+    play: '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12-7.5z" fill="#08090C"/></svg>',
+    gear: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>'
+  };
+  function toast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2400);
+  }
+  function fail(e, msg) { console.error(e); toast(msg || "Er ging iets mis. Probeer het opnieuw."); }
+
+  // ---------- TMDB via de Supabase-functie ----------
+  function tmdb(path, params = {}) {
+    const q = new URLSearchParams({ path, ...params });
+    const key = q.toString();
+    if (S.cache.has(key)) return S.cache.get(key);
+    const p = fetch(`${FN}?${key}`).then((r) => { if (!r.ok) throw new Error("TMDB " + r.status); return r.json(); });
+    S.cache.set(key, p);
+    p.catch(() => S.cache.delete(key));
+    return p;
+  }
+  async function nlProviders() {
+    if (!S.providers) {
+      const d = await tmdb("watch/providers/movie", { watch_region: "NL" });
+      S.providers = (d.results || []).sort((a, b) => (a.display_priorities?.NL ?? 999) - (b.display_priorities?.NL ?? 999));
+    }
+    return S.providers;
+  }
+  const myServices = () => S.me?.services || [];
+
+  // ---------- Opstarten en inloggen ----------
+  const inviteFromUrl = new URLSearchParams(location.search).get("uitnodiging");
+  if (inviteFromUrl) { try { localStorage.setItem("doekie-invite", inviteFromUrl.toLowerCase()); } catch (_) {} }
+
+  sb.auth.onAuthStateChange((event, session) => {
+    const prev = S.session?.user?.id;
+    S.session = session;
+    if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") return;
+    if (event === "SIGNED_IN" && S.me && prev === session?.user?.id) return;
+    setTimeout(boot, 0);
+  });
+
+  async function boot() {
+    if (location.hash.includes("access_token") || location.hash.includes("error=")) history.replaceState(null, "", location.pathname);
+    if (!S.session) { S.me = null; tabbar.hidden = true; return viewLogin(); }
+    if (!S.me || S.me.id !== S.session.user.id) {
+      const { data, error } = await sb.from("profiles").select("*").eq("id", S.session.user.id).maybeSingle();
+      if (error) return fail(error, "Je profiel kon niet laden.");
+      S.me = data;
+    }
+    if (!S.me) { tabbar.hidden = true; return viewOnboarding(); }
+    await acceptInvite();
+    route();
+  }
+
+  async function acceptInvite() {
+    let inv = null;
+    try { inv = localStorage.getItem("doekie-invite"); localStorage.removeItem("doekie-invite"); } catch (_) {}
+    if (!inv || inv === S.me.username) return;
+    const { data: p } = await sb.from("profiles").select("id, username").eq("username", inv).maybeSingle();
+    if (!p) return;
+    await sb.from("follows").upsert({ follower: S.me.id, followee: p.id }, { onConflict: "follower,followee", ignoreDuplicates: true });
+    toast(`Je volgt nu @${p.username}`);
+  }
+
+  async function viewLogin() {
+    let posters = [];
+    try { posters = (await tmdb("trending/movie/week")).results.filter((m) => m.poster_path).slice(0, 8); } catch (_) {}
+    const col = (list) => `<div class="wall-col">${list.map((m) => poster(m.poster_path)).join("")}</div>`;
+    app.innerHTML = `
+      <div class="login">
+        <div class="wall">
+          <div class="wall-grid">${col(posters.slice(0, 2))}${col(posters.slice(2, 5))}${col(posters.slice(5, 8))}</div>
+          <div class="wall-fade"></div>
+        </div>
+        <div class="login-body">
+          <div class="logo">doekie<span>.</span></div>
+          <p class="soft" style="margin:0;font-size:17px">Zie wat je vrienden kijken.<br>Weet meteen waar het staat.</p>
+        </div>
+        <form class="login-form" id="login-form">
+          <label class="label" for="email">E-mailadres</label>
+          <input class="input" id="email" type="email" autocomplete="email" placeholder="jij@voorbeeld.nl" required>
+          <button class="btn primary block" id="login-btn" type="submit">Stuur mij een code</button>
+          <p class="muted" style="margin:2px 0 0;text-align:center;font-size:12px">Gratis · Geen wachtwoord nodig</p>
+        </form>
+      </div>`;
+  }
+
+  function viewCode(email) {
+    app.innerHTML = `
+      <div class="center">
+        <div class="logo" style="font-size:48px">doekie<span>.</span></div>
+        <h1 class="h2">Check je mail</h1>
+        <p class="muted">We stuurden een code naar <b>${esc(email)}</b>. Vul hem hier in, of tik op de link in de mail.</p>
+        <form id="code-form" class="stack" style="width:100%;max-width:340px">
+          <input class="input" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Code uit de mail" required style="text-align:center;font-size:22px;letter-spacing:6px">
+          <button class="btn primary block" type="submit">Inloggen</button>
+          <button class="btn ghost block" type="button" data-act="login-back">Ander e-mailadres</button>
+        </form>
+      </div>`;
+    S.pendingEmail = email;
+  }
+
+  function viewOnboarding() {
+    app.innerHTML = `
+      <div class="center" style="align-items:stretch;text-align:left">
+        <div class="logo" style="font-size:48px">doekie<span>.</span></div>
+        <h1 class="h1">Kies je gebruikersnaam</h1>
+        <p class="muted" style="margin:0">Hiermee vinden je vrienden je. 3 tot 20 tekens: kleine letters, cijfers en _.</p>
+        <form id="onboard-form" class="stack">
+          <label class="label" for="username">Gebruikersnaam</label>
+          <input class="input" id="username" required pattern="[a-z0-9_]{3,20}" autocapitalize="off" autocomplete="off" placeholder="bijv. filmfan_kim">
+          <label class="label" for="displayname">Naam (mag je weglaten)</label>
+          <input class="input" id="displayname" maxlength="40" placeholder="Kim">
+          <button class="btn primary block" type="submit">Verder</button>
+        </form>
+      </div>`;
+  }
+
+  // ---------- Router ----------
+  function renderTabbar(active) {
+    const tab = (href, name, label, ic) => `<a href="#${href}" ${active === name ? 'aria-current="page"' : ""}>${ic}${label}</a>`;
+    tabbar.innerHTML =
+      tab("feed", "feed", "Feed", icon.home) +
+      tab("ontdek", "ontdek", "Ontdek", icon.search) +
+      `<a href="#ontdek" class="plus" aria-label="Film loggen" data-act="focus-search">${icon.plus}</a>` +
+      tab("vrienden", "vrienden", "Vrienden", icon.users) +
+      tab("profiel", "profiel", "Profiel", icon.user);
+    tabbar.hidden = false;
+  }
+
+  async function route() {
+    const id = ++S.routeId;
+    const [name, arg] = (location.hash.slice(1) || "feed").split("/");
+    renderTabbar(name === "u" ? "" : name);
+    app.innerHTML = `<div class="loading">Laden…</div>`;
+    window.scrollTo(0, 0);
+    const views = {
+      feed: viewFeed, ontdek: viewOntdek, vrienden: viewFriends, instellingen: viewSettings,
+      film: () => viewFilm(arg), profiel: () => viewProfile(S.me.username), u: () => viewProfile(decodeURIComponent(arg || ""))
+    };
+    try {
+      const html = await (views[name] || viewFeed)();
+      if (id !== S.routeId) return;
+      app.innerHTML = html;
+      if (name === "ontdek") runSearch();
+      if (S.focusSearch) { S.focusSearch = false; document.getElementById("zoek")?.focus(); }
+    } catch (e) {
+      if (id !== S.routeId) return;
+      console.error(e);
+      app.innerHTML = `<div class="center"><h1 class="h2">Dit lukte niet</h1><p class="muted">Controleer je internet en probeer het opnieuw.</p><button class="btn" data-act="retry">Opnieuw</button></div>`;
+    }
+  }
+  window.addEventListener("hashchange", () => { if (S.session && S.me) route(); });
+
+  // ---------- Feed ----------
+  async function followingIds() {
+    const { data } = await sb.from("follows").select("followee").eq("follower", S.me.id);
+    return (data || []).map((f) => f.followee);
+  }
+  function logCard(l) {
+    const p = l.profiles || {};
+    return `<article class="card">
+      <div class="card-head">${avatar(p)}<a href="#u/${esc(p.username)}"><b>${esc(p.display_name || p.username)}</b> keek</a><span class="when">${ago(l.created_at)}</span></div>
+      <a class="card-body" href="#film/${l.tmdb_id}">
+        <div class="thumb">${poster(l.poster_path, "w185")}</div>
+        <div class="info">
+          <div class="card-title">${esc(l.title)} <span class="y">${esc(l.year || "")}</span></div>
+          <div class="row" style="gap:8px"><span class="stars">${starText(l.rating)}</span>${l.liked ? '<span class="heart" aria-label="favoriet">♥</span>' : ""}${l.rewatch ? '<span class="muted" style="font-size:12px">herkijk</span>' : ""}</div>
+          ${l.service ? `<span class="chip" style="height:26px;align-self:flex-start;font-size:12px">${esc(l.service)}</span>` : ""}
+          ${l.review ? `<p class="review">${esc(l.review)}</p>` : ""}
+        </div>
+      </a>
+    </article>`;
+  }
+  async function viewFeed() {
+    const ids = [S.me.id, ...(await followingIds())];
+    const { data, error } = await sb.from("logs").select("*, profiles(username, display_name)").in("user_id", ids).order("created_at", { ascending: false }).limit(50);
+    if (error) throw error;
+    const head = `<div class="row" style="justify-content:space-between;margin-bottom:16px"><div class="logo" style="font-size:34px">doekie<span>.</span></div><a class="btn small" href="#vrienden">Uitnodigen</a></div>`;
+    if (!data.length) {
+      return head + `<div class="empty"><h2 class="h2">Je feed is nog leeg</h2><p class="muted" style="margin:0">Log je eerste film of nodig vrienden uit. Dan zie je hier wat jullie kijken.</p>
+        <div class="row wrap" style="justify-content:center"><a class="btn pink" href="#ontdek">Film zoeken</a><a class="btn" href="#vrienden">Vrienden uitnodigen</a></div></div>`;
+    }
+    return head + `<div class="stack">${data.map(logCard).join("")}</div>`;
+  }
+
+  // ---------- Ontdekken ----------
+  async function viewOntdek() {
+    const hasMine = myServices().length > 0;
+    return `<h1 class="h1">Ontdek</h1>
+      <div class="stack" style="margin-top:14px">
+        <input class="input" id="zoek" type="search" placeholder="Zoek een film" aria-label="Zoek een film" autocomplete="off">
+        <div class="chips">
+          <button class="chip" data-act="ontdek-all" aria-pressed="${!S.ontdekMine}">Populair</button>
+          ${hasMine ? `<button class="chip" data-act="ontdek-mine" aria-pressed="${S.ontdekMine}">Op mijn diensten</button>` : `<a class="chip" href="#instellingen">Kies je diensten</a>`}
+        </div>
+      </div>
+      <div class="section"><div class="section-head"><h2 class="h2" id="results-title">Populair deze week</h2></div><div class="grid" id="results"><div class="muted">Laden…</div></div></div>`;
+  }
+  async function runSearch() {
+    const box = document.getElementById("results"); if (!box) return;
+    const title = document.getElementById("results-title");
+    const q = (document.getElementById("zoek")?.value || "").trim();
+    let list, label;
+    try {
+      if (q) { list = (await tmdb("search/movie", { query: q, include_adult: "false" })).results; label = `Resultaten voor “${q}”`; }
+      else if (S.ontdekMine && myServices().length) {
+        list = (await tmdb("discover/movie", { watch_region: "NL", with_watch_providers: myServices().join("|"), with_watch_monetization_types: "flatrate", sort_by: "popularity.desc" })).results;
+        label = "Nu op jouw diensten";
+      } else { list = (await tmdb("trending/movie/week")).results; label = "Populair deze week"; }
+    } catch (e) { box.innerHTML = `<p class="muted">Films laden lukte niet. Probeer het opnieuw.</p>`; return; }
+    if (q !== (document.getElementById("zoek")?.value || "").trim()) return;
+    title.textContent = label;
+    box.innerHTML = list.length
+      ? list.slice(0, 30).map((m) => `<a class="tile" href="#film/${m.id}">${poster(m.poster_path)}<span class="t">${esc(m.title)}</span><span class="y">${yearOf(m.release_date)}</span></a>`).join("")
+      : `<p class="muted">Geen films gevonden.</p>`;
+  }
+
+  // ---------- Filmpagina ----------
+  async function viewFilm(id) {
+    id = Number(id);
+    const [m, wl, friends] = await Promise.all([
+      tmdb(`movie/${id}`, { append_to_response: "videos,credits,watch/providers", include_video_language: "nl,en" }),
+      sb.from("watchlist").select("tmdb_id").eq("user_id", S.me.id).eq("tmdb_id", id).maybeSingle(),
+      followingIds().then((ids) => sb.from("logs").select("*, profiles(username, display_name)").eq("tmdb_id", id).in("user_id", [S.me.id, ...ids]).order("created_at", { ascending: false }).limit(20))
+    ]);
+    S.film = m;
+    const director = (m.credits?.crew || []).find((c) => c.job === "Director")?.name;
+    const vids = (m.videos?.results || []).filter((v) => v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser"));
+    const trailer = vids.find((v) => v.iso_639_1 === "nl") || vids.find((v) => v.type === "Trailer") || vids[0];
+    const nl = m["watch/providers"]?.results?.NL || {};
+    const mine = new Set(myServices());
+    const provRow = (p, kind) => `<div class="provider${mine.has(p.provider_id) ? " mine" : ""}">
+        <img src="${IMG}w92${esc(p.logo_path)}" alt="">
+        <div class="n"><div style="font-weight:600">${esc(p.provider_name)}</div><div class="k">${kind}</div></div>
+        ${mine.has(p.provider_id) ? '<span class="badge">Jouw dienst</span>' : ""}
+      </div>`;
+    const seen = new Set();
+    const provs = [];
+    for (const [k, kind] of [["flatrate", "In het abonnement"], ["free", "Gratis"], ["ads", "Gratis met reclame"], ["rent", "Huren"], ["buy", "Kopen"]]) {
+      for (const p of nl[k] || []) { if (!seen.has(p.provider_id)) { seen.add(p.provider_id); provs.push(provRow(p, kind)); } }
+    }
+    const fl = friends.data || [];
+    const rated = fl.filter((l) => l.rating);
+    const avg = rated.length ? (rated.reduce((s, l) => s + Number(l.rating), 0) / rated.length).toFixed(1).replace(".", ",") : null;
+    S.filmTrailer = trailer?.key || null;
+    S.filmInList = !!wl.data;
+    return `
+      <div class="hero" style="background-image:${m.backdrop_path ? `url('${IMG}w780${esc(m.backdrop_path)}')` : "none"}">
+        <button class="back" data-act="back" aria-label="Terug">${icon.back}</button>
+        ${trailer ? `<button class="play" data-act="trailer"><span>${icon.play}</span>Bekijk trailer</button>` : ""}
+      </div>
+      <div class="film-head">
+        <div class="p">${poster(m.poster_path)}</div>
+        <div class="stack" style="gap:4px;min-width:0">
+          <h1 class="h1" style="font-size:28px;line-height:1.05">${esc(m.title)}</h1>
+          <span class="soft">${yearOf(m.release_date)}${director ? " · " + esc(director) : ""}</span>
+          <span class="muted" style="font-size:13px">${m.runtime ? m.runtime + " min · " : ""}${esc((m.genres || []).slice(0, 2).map((g) => g.name).join(", "))}</span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:18px">
+        <button class="btn pink" style="flex:1" data-act="log">+ Loggen</button>
+        <button class="btn" style="flex:1" data-act="watchlist" aria-pressed="${S.filmInList}">${S.filmInList ? "✓ Op kijklijst" : "+ Kijklijst"}</button>
+      </div>
+      ${m.overview ? `<p class="overview">${esc(m.overview)}</p>` : ""}
+      <div class="section">
+        <div class="section-head"><h2 class="h2">Waar te zien in Nederland</h2><span class="source">Bron: JustWatch</span></div>
+        <div class="stack" style="gap:8px">${provs.length ? provs.join("") : '<p class="muted" style="margin:0">Deze film staat nu niet bij een Nederlandse dienst.</p>'}</div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h2 class="h2">Jij en je vrienden</h2>${avg ? `<span class="stars">★ ${avg}</span>` : ""}</div>
+        ${fl.length ? `<div class="stack">${fl.map((l) => `<div class="row" style="align-items:flex-start">${avatar(l.profiles)}<div><div><b>${esc(l.profiles?.display_name || l.profiles?.username)}</b> <span class="stars">${starText(l.rating)}</span>${l.liked ? ' <span class="heart">♥</span>' : ""}</div>${l.review ? `<div class="soft" style="font-size:14px">${esc(l.review)}</div>` : ""}</div></div>`).join("")}</div>`
+          : '<p class="muted" style="margin:0">Nog niemand die je volgt heeft deze film gelogd.</p>'}
+      </div>`;
+  }
+
+  function openSheet(html) {
+    sheetRoot.innerHTML = `<div class="sheet-bg" data-act="sheet-bg"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
+    document.body.style.overflow = "hidden";
+  }
+  function closeSheet() { sheetRoot.innerHTML = ""; document.body.style.overflow = ""; }
+
+  function openTrailer() {
+    if (!S.filmTrailer) return;
+    openSheet(`<div class="sheet-head"><h2 class="h2">Trailer</h2><button class="x" data-act="close" aria-label="Sluiten">${icon.x}</button></div>
+      <div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(S.filmTrailer)}?autoplay=1&playsinline=1" title="Trailer" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`);
+  }
+
+  async function openLog() {
+    const m = S.film; if (!m) return;
+    const nl = m["watch/providers"]?.results?.NL || {};
+    const names = new Set();
+    for (const k of ["flatrate", "free", "ads", "rent", "buy"]) for (const p of nl[k] || []) names.add(p.provider_name);
+    try { const all = await nlProviders(); for (const p of all) if (myServices().includes(p.provider_id)) names.add(p.provider_name); } catch (_) {}
+    for (const e of EXTRA) names.add(e);
+    S.log = { rating: 0, liked: false, rewatch: false, service: [...names][0] || null, services: [...names] };
+    renderLogSheet();
+  }
+  function renderLogSheet() {
+    const L = S.log, m = S.film;
+    const starBtns = [1, 2, 3, 4, 5].map((n) => {
+      const cls = L.rating >= n ? "on" : L.rating >= n - 0.5 ? "half" : "";
+      return `<button type="button" class="${cls}" data-act="star" data-n="${n}" aria-label="${n} ${n === 1 ? "ster" : "sterren"}">★</button>`;
+    }).join("");
+    const prev = { date: document.getElementById("log-date")?.value, review: document.getElementById("log-review")?.value };
+    openSheet(`
+      <div class="sheet-head"><div><div class="label">Film loggen</div><h2 class="h2">${esc(m.title)} <span class="muted" style="font-weight:400;font-size:14px">${yearOf(m.release_date)}</span></h2></div><button class="x" data-act="close" aria-label="Sluiten">${icon.x}</button></div>
+      <div class="stack" style="align-items:center;gap:6px"><div class="star-input" role="group" aria-label="Beoordeling">${starBtns}</div>
+        <span class="muted" style="font-size:13px">${L.rating ? String(L.rating).replace(".", ",") + " van 5 · tik nog eens voor een halve ster" : "Tik om sterren te geven"}</span></div>
+      <div class="toggles">
+        <button type="button" data-act="toggle-liked" aria-pressed="${L.liked}">♥ Favoriet</button>
+        <button type="button" data-act="toggle-rewatch" aria-pressed="${L.rewatch}">↻ Herkijk</button>
+      </div>
+      <div class="stack" style="gap:8px"><span class="label">Gekeken op</span>
+        <div class="row wrap" style="gap:8px">${L.services.map((s) => `<button type="button" class="chip" data-act="service" data-s="${esc(s)}" aria-pressed="${L.service === s}">${esc(s)}</button>`).join("")}</div></div>
+      <label class="stack" style="gap:6px"><span class="label">Datum</span><input class="input" id="log-date" type="date" value="${esc(prev.date || today())}" max="${today()}"></label>
+      <label class="stack" style="gap:6px"><span class="label">Recensie</span><textarea class="input" id="log-review" maxlength="2000" placeholder="Wat vond je ervan?">${esc(prev.review || "")}</textarea></label>
+      <button class="btn primary block" data-act="save-log">Opslaan en delen</button>`);
+  }
+  async function saveLog(btn) {
+    const L = S.log, m = S.film;
+    btn.disabled = true;
+    const row = {
+      user_id: S.me.id, tmdb_id: m.id, title: m.title, year: Number(yearOf(m.release_date)) || null, poster_path: m.poster_path,
+      watched_on: document.getElementById("log-date").value || today(), rating: L.rating || null, liked: L.liked, rewatch: L.rewatch,
+      review: document.getElementById("log-review").value.trim() || null, service: L.service
+    };
+    const { error } = await sb.from("logs").insert(row);
+    if (error) { btn.disabled = false; return fail(error, "Opslaan lukte niet."); }
+    await sb.from("watchlist").delete().eq("user_id", S.me.id).eq("tmdb_id", m.id);
+    closeSheet(); toast("Opgeslagen in je dagboek");
+    location.hash = "feed";
+  }
+  async function toggleWatchlist(btn) {
+    const m = S.film; btn.disabled = true;
+    const q = S.filmInList
+      ? sb.from("watchlist").delete().eq("user_id", S.me.id).eq("tmdb_id", m.id)
+      : sb.from("watchlist").insert({ user_id: S.me.id, tmdb_id: m.id, title: m.title, year: Number(yearOf(m.release_date)) || null, poster_path: m.poster_path });
+    const { error } = await q;
+    btn.disabled = false;
+    if (error) return fail(error);
+    S.filmInList = !S.filmInList;
+    btn.setAttribute("aria-pressed", S.filmInList);
+    btn.textContent = S.filmInList ? "✓ Op kijklijst" : "+ Kijklijst";
+    toast(S.filmInList ? "Op je kijklijst gezet" : "Van je kijklijst gehaald");
+  }
+
+  // ---------- Profiel ----------
+  async function viewProfile(username) {
+    const { data: p } = await sb.from("profiles").select("*").eq("username", username).maybeSingle();
+    if (!p) return `<div class="center"><h1 class="h2">Dit profiel bestaat niet</h1><a class="btn" href="#feed">Naar je feed</a></div>`;
+    const isMe = p.id === S.me.id;
+    const [logs, followers, following, amFollowing, wl] = await Promise.all([
+      sb.from("logs").select("*").eq("user_id", p.id).order("watched_on", { ascending: false }).order("created_at", { ascending: false }).limit(500),
+      sb.from("follows").select("*", { count: "exact", head: true }).eq("followee", p.id),
+      sb.from("follows").select("*", { count: "exact", head: true }).eq("follower", p.id),
+      isMe ? Promise.resolve({ data: null }) : sb.from("follows").select("follower").eq("follower", S.me.id).eq("followee", p.id).maybeSingle(),
+      isMe ? sb.from("watchlist").select("*").eq("user_id", p.id).order("created_at", { ascending: false }) : Promise.resolve({ data: [] })
+    ]);
+    const L = logs.data || [];
+    S.profile = { p, isMe, logs: L, watchlist: wl.data || [], tab: S.profile?.p?.id === p.id ? S.profile.tab : "dagboek", following: !!amFollowing.data };
+    const yr = String(new Date().getFullYear());
+    return `
+      <div class="row" style="justify-content:flex-end;min-height:44px">${isMe ? `<a class="x" href="#instellingen" aria-label="Instellingen">${icon.gear}</a>` : ""}</div>
+      <div class="profile-head">${avatar(p, true)}<div style="min-width:0"><h1 class="h1" style="font-size:24px">${esc(p.display_name || p.username)}</h1><div class="muted">@${esc(p.username)}</div></div></div>
+      ${isMe ? "" : `<button class="btn ${S.profile.following ? "" : "pink"} block" style="margin-top:14px" data-act="follow">${S.profile.following ? "Volgend" : "Volgen"}</button>`}
+      <div class="counts">
+        <div><b>${L.length}</b><span>films</span></div>
+        <div><b>${L.filter((l) => (l.watched_on || "").startsWith(yr)).length}</b><span>in ${yr}</span></div>
+        <div><b>${followers.count ?? 0}</b><span>volgers</span></div>
+        <div><b>${following.count ?? 0}</b><span>volgend</span></div>
+      </div>
+      <div class="seg" role="tablist">
+        ${[["dagboek", "Dagboek"], ["kijklijst", "Kijklijst"], ["stats", "Statistiek"]].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
+      </div>
+      <div id="ptab-body" style="margin-top:12px">${profileTab()}</div>`;
+  }
+  function profileTab() {
+    const P = S.profile;
+    if (P.tab === "kijklijst") {
+      return P.watchlist.length ? `<div class="grid">${P.watchlist.map((w) => `<a class="tile" href="#film/${w.tmdb_id}">${poster(w.poster_path)}<span class="t">${esc(w.title)}</span></a>`).join("")}</div>`
+        : `<div class="empty"><p class="muted" style="margin:0">Je kijklijst is leeg. Tik bij een film op “+ Kijklijst”.</p></div>`;
+    }
+    if (P.tab === "stats") {
+      if (!P.logs.length) return `<div class="empty"><p class="muted" style="margin:0">Nog geen films gelogd.</p></div>`;
+      const per = {}; for (const l of P.logs) { const k = l.service || "Onbekend"; per[k] = (per[k] || 0) + 1; }
+      const rows = Object.entries(per).sort((a, b) => b[1] - a[1]); const max = rows[0][1];
+      const rated = P.logs.filter((l) => l.rating);
+      const avg = rated.length ? (rated.reduce((s, l) => s + Number(l.rating), 0) / rated.length).toFixed(1).replace(".", ",") : "–";
+      return `<div class="stack"><span class="soft">Waar ${P.isMe ? "je" : "er"} keek</span>
+        ${rows.map(([n, c]) => `<div class="bar"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n)}</span><span class="track"><span class="fill" style="width:${(c / max) * 100}%"></span></span><span class="num">${c}</span></div>`).join("")}
+        <span class="muted">Gemiddeld ★ ${avg} · ${P.logs.filter((l) => l.liked).length} favorieten</span></div>`;
+    }
+    return P.logs.length ? P.logs.map((l) => `<a class="diary-row" href="#film/${l.tmdb_id}">
+        <div class="d"><b>${new Date(l.watched_on + "T12:00").getDate()}</b>${esc(fmtDay(l.watched_on).split(" ")[1] || "")}</div>
+        <div class="thumb">${poster(l.poster_path, "w92")}</div>
+        <div class="m"><div class="t">${esc(l.title)}</div><div class="stars" style="font-size:12px">${starText(l.rating)}${l.liked ? ' <span class="heart">♥</span>' : ""}</div></div>
+        ${l.service ? `<span class="chip" style="height:26px;font-size:11px">${esc(l.service)}</span>` : ""}
+      </a>`).join("")
+      : `<div class="empty"><p class="muted" style="margin:0">${P.isMe ? "Je hebt nog geen films gelogd." : "Nog geen films gelogd."}</p>${P.isMe ? '<a class="btn pink" href="#ontdek">Film zoeken</a>' : ""}</div>`;
+  }
+  async function toggleFollow(btn) {
+    const P = S.profile; btn.disabled = true;
+    const q = P.following
+      ? sb.from("follows").delete().eq("follower", S.me.id).eq("followee", P.p.id)
+      : sb.from("follows").insert({ follower: S.me.id, followee: P.p.id });
+    const { error } = await q;
+    if (error) { btn.disabled = false; return fail(error); }
+    route();
+  }
+
+  // ---------- Vrienden ----------
+  const inviteLink = () => `${location.origin}${location.pathname}?uitnodiging=${encodeURIComponent(S.me.username)}`;
+  async function viewFriends() {
+    const { data } = await sb.from("follows").select("followee, profiles!follows_followee_fkey(username, display_name)").eq("follower", S.me.id);
+    const list = (data || []).map((f) => f.profiles).filter(Boolean);
+    return `<h1 class="h1">Vrienden</h1>
+      <div class="stack" style="margin-top:14px">
+        <input class="input" id="zoek-vriend" type="search" placeholder="Zoek op gebruikersnaam" aria-label="Zoek op gebruikersnaam" autocapitalize="off" autocomplete="off">
+        <div id="vriend-results"></div>
+        <div class="invite">
+          <div class="h2" style="color:inherit">Kijk samen met je vrienden</div>
+          <div style="font-size:14px">Stuur je link. Wie hem opent en een account maakt, volgt jou meteen.</div>
+          <button class="btn block" data-act="share">Deel mijn link</button>
+        </div>
+      </div>
+      <div class="section"><div class="label" style="margin-bottom:6px">Jij volgt (${list.length})</div>
+        ${list.length ? list.map((p) => personRow(p)).join("") : '<p class="muted">Je volgt nog niemand.</p>'}</div>`;
+  }
+  const personRow = (p) => `<a class="person" href="#u/${esc(p.username)}">${avatar(p)}<div class="m"><div style="font-weight:600">${esc(p.display_name || p.username)}</div><div class="s">@${esc(p.username)}</div></div><span class="muted">›</span></a>`;
+  async function searchFriends() {
+    const q = (document.getElementById("zoek-vriend")?.value || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+    const box = document.getElementById("vriend-results"); if (!box) return;
+    if (q.length < 2) { box.innerHTML = ""; return; }
+    const { data } = await sb.from("profiles").select("username, display_name").ilike("username", `${q}%`).neq("id", S.me.id).limit(10);
+    box.innerHTML = (data || []).length ? data.map(personRow).join("") : `<p class="muted">Niemand gevonden met @${esc(q)}.</p>`;
+  }
+  async function share() {
+    const url = inviteLink();
+    const text = "Kijk je mee op Doekie? Dan zie je wat ik kijk en waar films staan.";
+    if (navigator.share) { try { await navigator.share({ title: "Doekie", text, url }); return; } catch (_) { return; } }
+    try { await navigator.clipboard.writeText(url); toast("Link gekopieerd"); } catch (_) { prompt("Kopieer je link:", url); }
+  }
+
+  // ---------- Instellingen ----------
+  async function viewSettings() {
+    let provs = [];
+    try { provs = (await nlProviders()).slice(0, 30); } catch (_) {}
+    const mine = new Set(myServices());
+    return `<div class="row" style="gap:8px"><a class="x" href="#profiel" aria-label="Terug">${icon.back}</a><h1 class="h1" style="font-size:24px">Instellingen</h1></div>
+      <div class="section"><div class="label">Mijn diensten</div><p class="muted" style="margin:4px 0 10px;font-size:13px">Films op deze diensten krijgen het label “Jouw dienst”.</p>
+        <div class="list">${provs.map((p) => `<label class="check-row"><img src="${IMG}w92${esc(p.logo_path)}" alt=""><span>${esc(p.provider_name)}</span><input type="checkbox" data-prov="${p.provider_id}" ${mine.has(p.provider_id) ? "checked" : ""}></label>`).join("") || '<p class="muted">Diensten laden lukte niet.</p>'}</div></div>
+      <div class="section stack" style="gap:4px">
+        <button class="btn ghost block" style="justify-content:flex-start" data-act="logout">Uitloggen</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:28px">Filmdata en posters van TMDB. Streaminggegevens van JustWatch. Doekie gebruikt de TMDB API maar wordt niet door TMDB ondersteund of goedgekeurd.</p>`;
+  }
+  async function saveServices() {
+    const ids = [...document.querySelectorAll("[data-prov]:checked")].map((el) => Number(el.dataset.prov));
+    const { error } = await sb.from("profiles").update({ services: ids }).eq("id", S.me.id);
+    if (error) return fail(error, "Opslaan lukte niet.");
+    S.me.services = ids; toast("Diensten opgeslagen");
+  }
+
+  // ---------- Klikken, typen, versturen ----------
+  document.addEventListener("click", async (e) => {
+    const el = e.target.closest("[data-act]"); if (!el) return;
+    const act = el.dataset.act;
+    if (act === "sheet-bg" && e.target !== el) return;
+    switch (act) {
+      case "retry": route(); break;
+      case "login-back": viewLogin(); break;
+      case "focus-search": S.focusSearch = true; if (location.hash === "#ontdek") { e.preventDefault(); document.getElementById("zoek")?.focus(); } break;
+      case "back": history.length > 1 ? history.back() : (location.hash = "feed"); break;
+      case "ontdek-all": S.ontdekMine = false; route(); break;
+      case "ontdek-mine": S.ontdekMine = true; route(); break;
+      case "trailer": openTrailer(); break;
+      case "log": openLog(); break;
+      case "watchlist": toggleWatchlist(el); break;
+      case "close": case "sheet-bg": closeSheet(); break;
+      case "star": { const n = Number(el.dataset.n); S.log.rating = S.log.rating === n ? n - 0.5 : n; renderLogSheet(); break; }
+      case "toggle-liked": S.log.liked = !S.log.liked; renderLogSheet(); break;
+      case "toggle-rewatch": S.log.rewatch = !S.log.rewatch; renderLogSheet(); break;
+      case "service": S.log.service = el.dataset.s; renderLogSheet(); break;
+      case "save-log": saveLog(el); break;
+      case "ptab": S.profile.tab = el.dataset.t; document.querySelectorAll("[data-act=ptab]").forEach((b) => b.setAttribute("aria-selected", b === el)); document.getElementById("ptab-body").innerHTML = profileTab(); break;
+      case "follow": toggleFollow(el); break;
+      case "share": share(); break;
+      case "logout": await sb.auth.signOut(); location.hash = ""; break;
+    }
+  });
+  document.addEventListener("input", (e) => {
+    if (e.target.id === "zoek") { clearTimeout(S.searchT); S.searchT = setTimeout(runSearch, 300); }
+    if (e.target.id === "zoek-vriend") { clearTimeout(S.searchT); S.searchT = setTimeout(searchFriends, 250); }
+  });
+  document.addEventListener("change", (e) => { if (e.target.matches("[data-prov]")) saveServices(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && sheetRoot.innerHTML) closeSheet(); });
+  document.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    if (f.id === "login-form") {
+      const email = document.getElementById("email").value.trim();
+      const btn = document.getElementById("login-btn"); btn.disabled = true; btn.textContent = "Bezig…";
+      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+      if (error) { btn.disabled = false; btn.textContent = "Stuur mij een code"; return fail(error, error.status === 429 ? "Even te veel pogingen. Probeer het over een paar minuten." : "Versturen lukte niet. Klopt je e-mailadres?"); }
+      viewCode(email);
+    }
+    if (f.id === "code-form") {
+      const token = document.getElementById("code").value.replace(/\s/g, "");
+      const { error } = await sb.auth.verifyOtp({ email: S.pendingEmail, token, type: "email" });
+      if (error) return fail(error, "Die code klopt niet of is verlopen.");
+    }
+    if (f.id === "onboard-form") {
+      const username = document.getElementById("username").value.trim().toLowerCase();
+      const display_name = document.getElementById("displayname").value.trim() || null;
+      if (!/^[a-z0-9_]{3,20}$/.test(username)) return toast("Gebruik 3 tot 20 tekens: kleine letters, cijfers of _.");
+      const { data, error } = await sb.from("profiles").insert({ id: S.session.user.id, username, display_name }).select().single();
+      if (error) return fail(error, error.code === "23505" ? "Die gebruikersnaam is al bezet." : "Opslaan lukte niet.");
+      S.me = data; await acceptInvite(); location.hash = "ontdek"; route();
+    }
+  });
+
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
