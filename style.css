@@ -138,6 +138,8 @@ button.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); bor
 .seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: var(--surface); margin-top: 18px; }
 .seg button { height: 38px; border: 0; border-radius: 10px; background: transparent; color: var(--soft); font-size: 12px; font-weight: 600; padding: 0 3px; }
 .seg button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.profile-tabs { width: 100%; }
+.profile-tabs button { min-width: 0; white-space: nowrap; font-size: clamp(12px, 3.4vw, 14px); padding: 0 4px; }
 .diary-row { display: grid; grid-template-columns: 38px 42px minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; column-gap: 10px; row-gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .diary-row .d { width: 38px; text-align: center; font-size: 12px; color: var(--muted); }
 .diary-row .d b { display: block; font-size: 18px; color: var(--ink); line-height: 1; }
