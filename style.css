@@ -107,8 +107,9 @@ button.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); bor
 .film-head .p { width: 112px; flex: none; }
 .film-head .p img { border: 1px solid rgba(255,255,255,0.12); }
 .overview { color: var(--soft); margin: 14px 0 0; }
-.film-actions { gap: 8px; }
+.film-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .film-actions .btn { min-width: 0; padding: 0 8px; font-size: 13px; }
+.film-actions .favorite[aria-pressed="true"] { border-color: var(--green); background: var(--green-soft); color: var(--green-light); }
 .provider { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); }
 .provider.mine { border-color: var(--green); }
 .provider img { width: 40px; height: 40px; border-radius: 10px; }
@@ -132,8 +133,8 @@ button.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); bor
 .diary-row .m { flex: 1; min-width: 0; }
 .diary-row .m .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diary-row .diary-review { margin-top: 4px; font-size: 12px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.diary-row .diary-service { flex: none; }
-.diary-edit { flex: none; }
+.diary-row .diary-service { display: flex; width: max-content; max-width: 100%; height: 26px; margin-top: 4px; padding: 0 9px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.diary-edit { flex: none; height: 38px; padding: 0 10px; font-size: 12px; }
 .bar { display: grid; grid-template-columns: 110px minmax(0, 1fr) 30px; gap: 10px; align-items: center; font-size: 14px; }
 .bar .track { height: 12px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
 .bar .fill { display: block; height: 100%; border-radius: 6px; background: var(--green); }
