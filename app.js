@@ -1,4 +1,4 @@
-// Doekie – fase 1. Eén bestand met alle schermen.
+// Doekie – fase 1, met films en series. Eén bestand met alle schermen.
 (() => {
   "use strict";
 
@@ -76,12 +76,25 @@
   }
   async function nlProviders() {
     if (!S.providers) {
-      const d = await tmdb("watch/providers/movie", { watch_region: "NL" });
-      S.providers = (d.results || []).sort((a, b) => (a.display_priorities?.NL ?? 999) - (b.display_priorities?.NL ?? 999));
+      const [a, b] = await Promise.all([
+        tmdb("watch/providers/movie", { watch_region: "NL" }),
+        tmdb("watch/providers/tv", { watch_region: "NL" }).catch(() => ({ results: [] }))
+      ]);
+      const map = new Map();
+      for (const p of [...(a.results || []), ...(b.results || [])]) if (!map.has(p.provider_id)) map.set(p.provider_id, p);
+      S.providers = [...map.values()].sort((x, y) => (x.display_priorities?.NL ?? 999) - (y.display_priorities?.NL ?? 999));
     }
     return S.providers;
   }
   const myServices = () => S.me?.services || [];
+
+  // Films en series
+  const typeOf = (x) => (x?.media_type === "tv" ? "tv" : "movie");
+  const titleOf = (m) => m?.title || m?.name || "";
+  const dateOf = (m) => m?.release_date || m?.first_air_date || "";
+  const linkTo = (type, id) => `#${type === "tv" ? "serie" : "film"}/${id}`;
+  const tvTag = (type) => (type === "tv" ? '<span style="display:inline-block;font-family:Inter,sans-serif;font-size:11px;font-weight:700;color:#FF8AB4;background:rgba(255,77,141,0.14);padding:1px 7px;border-radius:999px;margin-left:6px;vertical-align:middle">Serie</span>' : "");
+  const onlyTitles = (list) => (list || []).filter((m) => m.media_type === "movie" || m.media_type === "tv");
 
   // ---------- Opstarten en inloggen ----------
   const inviteFromUrl = new URLSearchParams(location.search).get("uitnodiging");
@@ -197,7 +210,7 @@
     window.scrollTo(0, 0);
     const views = {
       feed: viewFeed, ontdek: viewOntdek, vrienden: viewFriends, instellingen: viewSettings,
-      film: () => viewFilm(arg), profiel: () => viewProfile(S.me.username), u: () => viewProfile(decodeURIComponent(arg || ""))
+      film: () => viewFilm(arg, "movie"), serie: () => viewFilm(arg, "tv"), persoon: () => viewPerson(arg), profiel: () => viewProfile(S.me.username), u: () => viewProfile(decodeURIComponent(arg || ""))
     };
     try {
       const html = await (views[name] || viewFeed)();
@@ -222,10 +235,10 @@
     const p = l.profiles || {};
     return `<article class="card">
       <div class="card-head">${avatar(p)}<a href="#u/${esc(p.username)}"><b>${esc(p.display_name || p.username)}</b> keek</a><span class="when">${ago(l.created_at)}</span></div>
-      <a class="card-body" href="#film/${l.tmdb_id}">
+      <a class="card-body" href="${linkTo(typeOf(l), l.tmdb_id)}">
         <div class="thumb">${poster(l.poster_path, "w185")}</div>
         <div class="info">
-          <div class="card-title">${esc(l.title)} <span class="y">${esc(l.year || "")}</span></div>
+          <div class="card-title">${esc(l.title)} <span class="y">${esc(l.year || "")}</span>${tvTag(typeOf(l))}</div>
           <div class="row" style="gap:8px"><span class="stars">${starText(l.rating)}</span>${l.liked ? '<span class="heart" aria-label="favoriet">♥</span>' : ""}${l.rewatch ? '<span class="muted" style="font-size:12px">herkijk</span>' : ""}</div>
           ${l.service ? `<span class="chip" style="height:26px;align-self:flex-start;font-size:12px">${esc(l.service)}</span>` : ""}
           ${l.review ? `<p class="review">${esc(l.review)}</p>` : ""}
@@ -239,8 +252,8 @@
     if (error) throw error;
     const head = `<div class="row" style="justify-content:space-between;margin-bottom:16px"><div class="logo" style="font-size:34px">doekie<span>.</span></div><a class="btn small" href="#vrienden">Uitnodigen</a></div>`;
     if (!data.length) {
-      return head + `<div class="empty"><h2 class="h2">Je feed is nog leeg</h2><p class="muted" style="margin:0">Log je eerste film of nodig vrienden uit. Dan zie je hier wat jullie kijken.</p>
-        <div class="row wrap" style="justify-content:center"><a class="btn pink" href="#ontdek">Film zoeken</a><a class="btn" href="#vrienden">Vrienden uitnodigen</a></div></div>`;
+      return head + `<div class="empty"><h2 class="h2">Je feed is nog leeg</h2><p class="muted" style="margin:0">Log je eerste film of serie, of nodig vrienden uit. Dan zie je hier wat jullie kijken.</p>
+        <div class="row wrap" style="justify-content:center"><a class="btn pink" href="#ontdek">Zoeken</a><a class="btn" href="#vrienden">Vrienden uitnodigen</a></div></div>`;
     }
     return head + `<div class="stack">${data.map(logCard).join("")}</div>`;
   }
@@ -250,43 +263,112 @@
     const hasMine = myServices().length > 0;
     return `<h1 class="h1">Ontdek</h1>
       <div class="stack" style="margin-top:14px">
-        <input class="input" id="zoek" type="search" placeholder="Zoek een film" aria-label="Zoek een film" autocomplete="off">
+        <input class="input" id="zoek" type="search" placeholder="Zoek een film of serie" aria-label="Zoek een film of serie" autocomplete="off">
         <div class="chips">
           <button class="chip" data-act="ontdek-all" aria-pressed="${!S.ontdekMine}">Populair</button>
           ${hasMine ? `<button class="chip" data-act="ontdek-mine" aria-pressed="${S.ontdekMine}">Op mijn diensten</button>` : `<a class="chip" href="#instellingen">Kies je diensten</a>`}
         </div>
       </div>
+      <div id="people-results"></div>
       <div class="section"><div class="section-head"><h2 class="h2" id="results-title">Populair deze week</h2></div><div class="grid" id="results"><div class="muted">Laden…</div></div></div>`;
+  }
+
+  // Slim zoeken: probeer ook zonder spaties ("jack ass" → "jackass") en zonder streepjes,
+  // en neem de bekendste titels van gevonden personen mee ("steve-o" → Jackass).
+  const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]/g, "");
+  async function smartSearch(q) {
+    const variants = [...new Set([q, q.replace(/\s+/g, ""), q.replace(/[-–.]/g, " ").replace(/\s+/g, " ").trim()])].filter((v) => v.length >= 2);
+    const pages = await Promise.all(variants.map((v) => tmdb("search/multi", { query: v, include_adult: "false" }).catch(() => ({ results: [] }))));
+    const seen = new Map();
+    const people = [];
+    const nq = norm(q);
+    for (const page of pages) {
+      for (const r of page.results || []) {
+        if (r.media_type === "person") { if (!people.some((p) => p.id === r.id)) people.push(r); continue; }
+        if (r.media_type !== "movie" && r.media_type !== "tv") continue;
+        const key = r.media_type + r.id;
+        const t = norm(titleOf(r)), o = norm(r.original_title || r.original_name);
+        const match = t.includes(nq) || o.includes(nq) || nq.includes(t) ? 1000 : 0;
+        const score = match + (r.popularity || 0);
+        if (!seen.has(key) || seen.get(key).score < score) seen.set(key, { ...r, score });
+      }
+    }
+    people.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+    for (const p of people.slice(0, 2)) {
+      for (const k of p.known_for || []) {
+        if (k.media_type !== "movie" && k.media_type !== "tv") continue;
+        const key = k.media_type + k.id;
+        if (!seen.has(key)) seen.set(key, { ...k, score: 500 + (k.popularity || 0) });
+      }
+    }
+    return { titles: [...seen.values()].sort((a, b) => b.score - a.score), people: people.slice(0, 6) };
+  }
+  function renderPeople(people) {
+    const box = document.getElementById("people-results"); if (!box) return;
+    box.innerHTML = people.length ? `<div class="section"><div class="label" style="margin-bottom:8px">Personen</div><div class="chips">${people.map((p) => `
+      <a class="chip" style="height:44px;padding:0 14px 0 4px" href="#persoon/${p.id}">
+        ${p.profile_path ? `<img src="${IMG}w185${esc(p.profile_path)}" alt="" style="width:36px;height:36px;border-radius:50%;object-fit:cover">` : `<span class="avatar" style="width:36px;height:36px;background:${colorFor(p.name)}">${esc(p.name[0])}</span>`}
+        <span style="display:flex;flex-direction:column;line-height:1.15"><span style="color:var(--ink)">${esc(p.name)}</span><span style="font-size:11px;font-weight:500;color:var(--muted)">${p.known_for_department === "Acting" ? "Acteur" : p.known_for_department === "Directing" ? "Regisseur" : esc(p.known_for_department || "")}</span></span>
+      </a>`).join("")}</div></div>` : "";
+  }
+
+  // ---------- Personen ----------
+  async function viewPerson(id) {
+    const p = await tmdb(`person/${Number(id)}`, { append_to_response: "combined_credits" });
+    const seen = new Set();
+    const credits = [...(p.combined_credits?.cast || []), ...(p.combined_credits?.crew || [])]
+      .filter((c) => (c.media_type === "movie" || c.media_type === "tv") && c.poster_path && !seen.has(c.media_type + c.id) && seen.add(c.media_type + c.id))
+      .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+      .slice(0, 60);
+    return `<div class="row" style="gap:8px;margin-bottom:16px"><button class="x" data-act="back" aria-label="Terug">${icon.back}</button></div>
+      <div class="profile-head">
+        ${p.profile_path ? `<img src="${IMG}w185${esc(p.profile_path)}" alt="" style="width:84px;height:84px;border-radius:50%;object-fit:cover;flex:none">` : avatar({ username: p.name, display_name: p.name }, true)}
+        <div style="min-width:0"><h1 class="h1" style="font-size:26px">${esc(p.name)}</h1><div class="muted">${p.known_for_department === "Acting" ? "Acteur" : esc(p.known_for_department || "")}${p.birthday ? " · geboren " + esc(p.birthday.slice(0, 4)) : ""}</div></div>
+      </div>
+      ${p.biography ? `<p class="overview" style="display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden">${esc(p.biography)}</p>` : ""}
+      <div class="section"><div class="section-head"><h2 class="h2">Films en series</h2><span class="muted" style="font-size:13px">${credits.length}</span></div>
+        <div class="grid">${credits.map((m) => `<a class="tile" href="${linkTo(typeOf(m), m.id)}">${poster(m.poster_path)}<span class="t">${esc(titleOf(m))}</span><span class="y">${yearOf(dateOf(m))}${m.media_type === "tv" ? " · Serie" : ""}</span></a>`).join("") || '<p class="muted">Geen titels gevonden.</p>'}</div></div>`;
   }
   async function runSearch() {
     const box = document.getElementById("results"); if (!box) return;
     const title = document.getElementById("results-title");
     const q = (document.getElementById("zoek")?.value || "").trim();
-    let list, label;
+    let list, label, people = [];
     try {
-      if (q) { list = (await tmdb("search/movie", { query: q, include_adult: "false" })).results; label = `Resultaten voor “${q}”`; }
+      if (q) { const r = await smartSearch(q); list = r.titles; people = r.people; label = `Resultaten voor “${q}”`; }
       else if (S.ontdekMine && myServices().length) {
-        list = (await tmdb("discover/movie", { watch_region: "NL", with_watch_providers: myServices().join("|"), with_watch_monetization_types: "flatrate", sort_by: "popularity.desc" })).results;
+        const p = { watch_region: "NL", with_watch_providers: myServices().join("|"), with_watch_monetization_types: "flatrate", sort_by: "popularity.desc" };
+        const [mv, tv] = await Promise.all([tmdb("discover/movie", p), tmdb("discover/tv", p).catch(() => ({ results: [] }))]);
+        list = [...mv.results.map((m) => ({ ...m, media_type: "movie" })), ...tv.results.map((m) => ({ ...m, media_type: "tv" }))].sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
         label = "Nu op jouw diensten";
-      } else { list = (await tmdb("trending/movie/week")).results; label = "Populair deze week"; }
-    } catch (e) { box.innerHTML = `<p class="muted">Films laden lukte niet. Probeer het opnieuw.</p>`; return; }
+      } else { list = onlyTitles((await tmdb("trending/all/week")).results); label = "Populair deze week"; }
+    } catch (e) { box.innerHTML = `<p class="muted">Laden lukte niet. Probeer het opnieuw.</p>`; return; }
     if (q !== (document.getElementById("zoek")?.value || "").trim()) return;
+    renderPeople(people);
     title.textContent = label;
     box.innerHTML = list.length
-      ? list.slice(0, 30).map((m) => `<a class="tile" href="#film/${m.id}">${poster(m.poster_path)}<span class="t">${esc(m.title)}</span><span class="y">${yearOf(m.release_date)}</span></a>`).join("")
-      : `<p class="muted">Geen films gevonden.</p>`;
+      ? list.slice(0, 30).map((m) => `<a class="tile" href="${linkTo(typeOf(m), m.id)}">${poster(m.poster_path)}<span class="t">${esc(titleOf(m))}</span><span class="y">${yearOf(dateOf(m))}${m.media_type === "tv" ? " · Serie" : ""}</span></a>`).join("")
+      : `<p class="muted">Niets gevonden.</p>`;
   }
 
   // ---------- Filmpagina ----------
-  async function viewFilm(id) {
+  async function viewFilm(id, type) {
     id = Number(id);
     const [m, wl, friends] = await Promise.all([
-      tmdb(`movie/${id}`, { append_to_response: "videos,credits,watch/providers", include_video_language: "nl,en" }),
-      sb.from("watchlist").select("tmdb_id").eq("user_id", S.me.id).eq("tmdb_id", id).maybeSingle(),
-      followingIds().then((ids) => sb.from("logs").select("*, profiles(username, display_name)").eq("tmdb_id", id).in("user_id", [S.me.id, ...ids]).order("created_at", { ascending: false }).limit(20))
+      tmdb(`${type}/${id}`, { append_to_response: "videos,credits,watch/providers", include_video_language: "nl,en" }),
+      sb.from("watchlist").select("tmdb_id").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).maybeSingle(),
+      followingIds().then((ids) => sb.from("logs").select("*, profiles(username, display_name)").eq("media_type", type).eq("tmdb_id", id).in("user_id", [S.me.id, ...ids]).order("created_at", { ascending: false }).limit(20))
     ]);
+    m.media_type = type;
     S.film = m;
-    const director = (m.credits?.crew || []).find((c) => c.job === "Director")?.name;
+    const isTv = type === "tv";
+    const director = isTv
+      ? (m.created_by || []).slice(0, 2).map((c) => c.name).join(" & ")
+      : (m.credits?.crew || []).find((c) => c.job === "Director")?.name;
+    const what = isTv ? "serie" : "film";
+    const lengthText = isTv
+      ? (m.number_of_seasons ? `${m.number_of_seasons} ${m.number_of_seasons === 1 ? "seizoen" : "seizoenen"} · ` : "")
+      : (m.runtime ? m.runtime + " min · " : "");
     const vids = (m.videos?.results || []).filter((v) => v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser"));
     const trailer = vids.find((v) => v.iso_639_1 === "nl") || vids.find((v) => v.type === "Trailer") || vids[0];
     const nl = m["watch/providers"]?.results?.NL || {};
@@ -314,9 +396,9 @@
       <div class="film-head">
         <div class="p">${poster(m.poster_path)}</div>
         <div class="stack" style="gap:4px;min-width:0">
-          <h1 class="h1" style="font-size:28px;line-height:1.05">${esc(m.title)}</h1>
-          <span class="soft">${yearOf(m.release_date)}${director ? " · " + esc(director) : ""}</span>
-          <span class="muted" style="font-size:13px">${m.runtime ? m.runtime + " min · " : ""}${esc((m.genres || []).slice(0, 2).map((g) => g.name).join(", "))}</span>
+          <h1 class="h1" style="font-size:28px;line-height:1.05">${esc(titleOf(m))}${tvTag(type)}</h1>
+          <span class="soft">${yearOf(dateOf(m))}${director ? " · " + esc(director) : ""}</span>
+          <span class="muted" style="font-size:13px">${lengthText}${esc((m.genres || []).slice(0, 2).map((g) => g.name).join(", "))}</span>
         </div>
       </div>
       <div class="row" style="margin-top:18px">
@@ -326,12 +408,12 @@
       ${m.overview ? `<p class="overview">${esc(m.overview)}</p>` : ""}
       <div class="section">
         <div class="section-head"><h2 class="h2">Waar te zien in Nederland</h2><span class="source">Bron: JustWatch</span></div>
-        <div class="stack" style="gap:8px">${provs.length ? provs.join("") : '<p class="muted" style="margin:0">Deze film staat nu niet bij een Nederlandse dienst.</p>'}</div>
+        <div class="stack" style="gap:8px">${provs.length ? provs.join("") : `<p class="muted" style="margin:0">Deze ${what} staat nu niet bij een Nederlandse dienst.</p>`}</div>
       </div>
       <div class="section">
         <div class="section-head"><h2 class="h2">Jij en je vrienden</h2>${avg ? `<span class="stars">★ ${avg}</span>` : ""}</div>
         ${fl.length ? `<div class="stack">${fl.map((l) => `<div class="row" style="align-items:flex-start">${avatar(l.profiles)}<div><div><b>${esc(l.profiles?.display_name || l.profiles?.username)}</b> <span class="stars">${starText(l.rating)}</span>${l.liked ? ' <span class="heart">♥</span>' : ""}</div>${l.review ? `<div class="soft" style="font-size:14px">${esc(l.review)}</div>` : ""}</div></div>`).join("")}</div>`
-          : '<p class="muted" style="margin:0">Nog niemand die je volgt heeft deze film gelogd.</p>'}
+          : `<p class="muted" style="margin:0">Nog niemand die je volgt heeft deze ${what} gelogd.</p>`}
       </div>`;
   }
 
@@ -365,7 +447,7 @@
     }).join("");
     const prev = { date: document.getElementById("log-date")?.value, review: document.getElementById("log-review")?.value };
     openSheet(`
-      <div class="sheet-head"><div><div class="label">Film loggen</div><h2 class="h2">${esc(m.title)} <span class="muted" style="font-weight:400;font-size:14px">${yearOf(m.release_date)}</span></h2></div><button class="x" data-act="close" aria-label="Sluiten">${icon.x}</button></div>
+      <div class="sheet-head"><div><div class="label">${m.media_type === "tv" ? "Serie" : "Film"} loggen</div><h2 class="h2">${esc(titleOf(m))} <span class="muted" style="font-weight:400;font-size:14px">${yearOf(dateOf(m))}</span></h2></div><button class="x" data-act="close" aria-label="Sluiten">${icon.x}</button></div>
       <div class="stack" style="align-items:center;gap:6px"><div class="star-input" role="group" aria-label="Beoordeling">${starBtns}</div>
         <span class="muted" style="font-size:13px">${L.rating ? String(L.rating).replace(".", ",") + " van 5 · tik nog eens voor een halve ster" : "Tik om sterren te geven"}</span></div>
       <div class="toggles">
@@ -382,21 +464,21 @@
     const L = S.log, m = S.film;
     btn.disabled = true;
     const row = {
-      user_id: S.me.id, tmdb_id: m.id, title: m.title, year: Number(yearOf(m.release_date)) || null, poster_path: m.poster_path,
+      user_id: S.me.id, media_type: m.media_type, tmdb_id: m.id, title: titleOf(m), year: Number(yearOf(dateOf(m))) || null, poster_path: m.poster_path,
       watched_on: document.getElementById("log-date").value || today(), rating: L.rating || null, liked: L.liked, rewatch: L.rewatch,
       review: document.getElementById("log-review").value.trim() || null, service: L.service
     };
     const { error } = await sb.from("logs").insert(row);
     if (error) { btn.disabled = false; return fail(error, "Opslaan lukte niet."); }
-    await sb.from("watchlist").delete().eq("user_id", S.me.id).eq("tmdb_id", m.id);
+    await sb.from("watchlist").delete().eq("user_id", S.me.id).eq("media_type", m.media_type).eq("tmdb_id", m.id);
     closeSheet(); toast("Opgeslagen in je dagboek");
     location.hash = "feed";
   }
   async function toggleWatchlist(btn) {
     const m = S.film; btn.disabled = true;
     const q = S.filmInList
-      ? sb.from("watchlist").delete().eq("user_id", S.me.id).eq("tmdb_id", m.id)
-      : sb.from("watchlist").insert({ user_id: S.me.id, tmdb_id: m.id, title: m.title, year: Number(yearOf(m.release_date)) || null, poster_path: m.poster_path });
+      ? sb.from("watchlist").delete().eq("user_id", S.me.id).eq("media_type", m.media_type).eq("tmdb_id", m.id)
+      : sb.from("watchlist").insert({ user_id: S.me.id, media_type: m.media_type, tmdb_id: m.id, title: titleOf(m), year: Number(yearOf(dateOf(m))) || null, poster_path: m.poster_path });
     const { error } = await q;
     btn.disabled = false;
     if (error) return fail(error);
@@ -426,7 +508,7 @@
       <div class="profile-head">${avatar(p, true)}<div style="min-width:0"><h1 class="h1" style="font-size:24px">${esc(p.display_name || p.username)}</h1><div class="muted">@${esc(p.username)}</div></div></div>
       ${isMe ? "" : `<button class="btn ${S.profile.following ? "" : "pink"} block" style="margin-top:14px" data-act="follow">${S.profile.following ? "Volgend" : "Volgen"}</button>`}
       <div class="counts">
-        <div><b>${L.length}</b><span>films</span></div>
+        <div><b>${L.length}</b><span>gelogd</span></div>
         <div><b>${L.filter((l) => (l.watched_on || "").startsWith(yr)).length}</b><span>in ${yr}</span></div>
         <div><b>${followers.count ?? 0}</b><span>volgers</span></div>
         <div><b>${following.count ?? 0}</b><span>volgend</span></div>
@@ -439,11 +521,11 @@
   function profileTab() {
     const P = S.profile;
     if (P.tab === "kijklijst") {
-      return P.watchlist.length ? `<div class="grid">${P.watchlist.map((w) => `<a class="tile" href="#film/${w.tmdb_id}">${poster(w.poster_path)}<span class="t">${esc(w.title)}</span></a>`).join("")}</div>`
-        : `<div class="empty"><p class="muted" style="margin:0">Je kijklijst is leeg. Tik bij een film op “+ Kijklijst”.</p></div>`;
+      return P.watchlist.length ? `<div class="grid">${P.watchlist.map((w) => `<a class="tile" href="${linkTo(typeOf(w), w.tmdb_id)}">${poster(w.poster_path)}<span class="t">${esc(w.title)}</span>${typeOf(w) === "tv" ? '<span class="y">Serie</span>' : ""}</a>`).join("")}</div>`
+        : `<div class="empty"><p class="muted" style="margin:0">Je kijklijst is leeg. Tik bij een film of serie op “+ Kijklijst”.</p></div>`;
     }
     if (P.tab === "stats") {
-      if (!P.logs.length) return `<div class="empty"><p class="muted" style="margin:0">Nog geen films gelogd.</p></div>`;
+      if (!P.logs.length) return `<div class="empty"><p class="muted" style="margin:0">Nog niets gelogd.</p></div>`;
       const per = {}; for (const l of P.logs) { const k = l.service || "Onbekend"; per[k] = (per[k] || 0) + 1; }
       const rows = Object.entries(per).sort((a, b) => b[1] - a[1]); const max = rows[0][1];
       const rated = P.logs.filter((l) => l.rating);
@@ -452,13 +534,13 @@
         ${rows.map(([n, c]) => `<div class="bar"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n)}</span><span class="track"><span class="fill" style="width:${(c / max) * 100}%"></span></span><span class="num">${c}</span></div>`).join("")}
         <span class="muted">Gemiddeld ★ ${avg} · ${P.logs.filter((l) => l.liked).length} favorieten</span></div>`;
     }
-    return P.logs.length ? P.logs.map((l) => `<a class="diary-row" href="#film/${l.tmdb_id}">
+    return P.logs.length ? P.logs.map((l) => `<a class="diary-row" href="${linkTo(typeOf(l), l.tmdb_id)}">
         <div class="d"><b>${new Date(l.watched_on + "T12:00").getDate()}</b>${esc(fmtDay(l.watched_on).split(" ")[1] || "")}</div>
         <div class="thumb">${poster(l.poster_path, "w92")}</div>
         <div class="m"><div class="t">${esc(l.title)}</div><div class="stars" style="font-size:12px">${starText(l.rating)}${l.liked ? ' <span class="heart">♥</span>' : ""}</div></div>
         ${l.service ? `<span class="chip" style="height:26px;font-size:11px">${esc(l.service)}</span>` : ""}
       </a>`).join("")
-      : `<div class="empty"><p class="muted" style="margin:0">${P.isMe ? "Je hebt nog geen films gelogd." : "Nog geen films gelogd."}</p>${P.isMe ? '<a class="btn pink" href="#ontdek">Film zoeken</a>' : ""}</div>`;
+      : `<div class="empty"><p class="muted" style="margin:0">${P.isMe ? "Je hebt nog niets gelogd." : "Nog niets gelogd."}</p>${P.isMe ? '<a class="btn pink" href="#ontdek">Film of serie zoeken</a>' : ""}</div>`;
   }
   async function toggleFollow(btn) {
     const P = S.profile; btn.disabled = true;
