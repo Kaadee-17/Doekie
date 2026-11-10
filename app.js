@@ -359,7 +359,7 @@
       tmdb(`${type}/${id}`, { append_to_response: "videos,credits,watch/providers", include_video_language: "nl,en" }),
       sb.from("watchlist").select("tmdb_id").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).maybeSingle(),
       followingIds().then((ids) => sb.from("logs").select("*, profiles(username, display_name)").eq("media_type", type).eq("tmdb_id", id).in("user_id", [S.me.id, ...ids]).order("created_at", { ascending: false }).limit(20)),
-      sb.from("logs").select("id").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).limit(1)
+      sb.from("logs").select("*").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).order("watched_on", { ascending: false }).order("created_at", { ascending: false }).limit(1)
     ]);
     m.media_type = type;
     S.film = m;
@@ -391,6 +391,8 @@
     S.filmTrailer = trailer?.key || null;
     S.filmInList = !!wl.data;
     S.filmSeen = !!myLogs.data?.length;
+    S.filmLog = myLogs.data?.[0] || null;
+    S.filmLiked = !!S.filmLog?.liked;
     return `
       <div class="hero" style="background-image:${m.backdrop_path ? `url('${IMG}w780${esc(m.backdrop_path)}')` : "none"}">
         <button class="back" data-act="back" aria-label="Terug">${icon.back}</button>
@@ -406,6 +408,7 @@
       </div>
       <div class="row film-actions" style="margin-top:18px">
         <button class="btn accent" style="flex:1" data-act="seen" aria-pressed="${S.filmSeen}">${S.filmSeen ? "✓ Gezien" : "○ Gezien"}</button>
+        <button class="btn favorite" style="flex:1" data-act="favorite" aria-pressed="${S.filmLiked}">${S.filmLiked ? "♥ Favoriet" : "♡ Favoriet"}</button>
         <button class="btn" style="flex:1" data-act="log">+ Recensie</button>
         <button class="btn" style="flex:1" data-act="watchlist" aria-pressed="${S.filmInList}">${S.filmInList ? "✓ Op kijklijst" : "+ Kijklijst"}</button>
       </div>
@@ -545,13 +548,38 @@
       btn.textContent = "✓ Gezien";
       return toast("Deze titel staat al als gezien");
     }
-    const { error: insertError } = await sb.from("logs").insert({ user_id: S.me.id, media_type: m.media_type, tmdb_id: m.id, title: titleOf(m), year: Number(yearOf(dateOf(m))) || null, poster_path: m.poster_path, watched_on: today(), rating: null, liked: false, rewatch: false, review: null, service: null });
+    const { data: newLog, error: insertError } = await sb.from("logs").insert({ user_id: S.me.id, media_type: m.media_type, tmdb_id: m.id, title: titleOf(m), year: Number(yearOf(dateOf(m))) || null, poster_path: m.poster_path, watched_on: today(), rating: null, liked: false, rewatch: false, review: null, service: null }).select().single();
     btn.disabled = false;
     if (insertError) return fail(insertError, "Markeren als gezien lukte niet.");
     S.filmSeen = true;
+    S.filmLog = newLog;
+    S.filmLiked = !!newLog?.liked;
     btn.setAttribute("aria-pressed", "true");
     btn.textContent = "✓ Gezien";
     toast("Als gezien opgeslagen");
+  }
+
+  async function toggleFavorite(btn) {
+    const m = S.film;
+    if (!m) return;
+    btn.disabled = true;
+    const liked = !S.filmLiked;
+    let data = null, error = null;
+    if (S.filmLog?.id) {
+      ({ data, error } = await sb.from("logs").update({ liked }).eq("id", S.filmLog.id).eq("user_id", S.me.id).select().single());
+    } else {
+      ({ data, error } = await sb.from("logs").insert({ user_id: S.me.id, media_type: m.media_type, tmdb_id: m.id, title: titleOf(m), year: Number(yearOf(dateOf(m))) || null, poster_path: m.poster_path, watched_on: today(), rating: null, liked, rewatch: false, review: null, service: null }).select().single());
+    }
+    btn.disabled = false;
+    if (error) return fail(error, "Favoriet opslaan lukte niet.");
+    S.filmLog = data;
+    S.filmSeen = true;
+    S.filmLiked = liked;
+    btn.setAttribute("aria-pressed", String(liked));
+    btn.textContent = liked ? "♥ Favoriet" : "♡ Favoriet";
+    const seenBtn = document.querySelector('[data-act="seen"]');
+    if (seenBtn) { seenBtn.setAttribute("aria-pressed", "true"); seenBtn.textContent = "✓ Gezien"; }
+    toast(liked ? "Als favoriet opgeslagen" : "Uit favorieten gehaald");
   }
 
   // ---------- Profiel ----------
@@ -611,9 +639,8 @@
     return P.logs.length ? P.logs.map((l) => `<div class="diary-row">
         <div class="d"><b>${new Date(l.watched_on + "T12:00").getDate()}</b>${esc(fmtDay(l.watched_on).split(" ")[1] || "")}</div>
         <a class="thumb" href="${linkTo(typeOf(l), l.tmdb_id)}">${poster(l.poster_path, "w92")}</a>
-        <a class="m" href="${linkTo(typeOf(l), l.tmdb_id)}"><div class="t">${esc(l.title)}</div><div class="stars" style="font-size:12px">${starText(l.rating)}${l.liked ? ' <span class="heart">♥</span>' : ""}</div>${l.review ? `<div class="review diary-review">${esc(l.review)}</div>` : ""}</a>
-        ${l.service ? `<span class="chip diary-service" style="height:26px;font-size:11px">${esc(l.service)}</span>` : ""}
-        ${P.isMe ? `<button type="button" class="btn small diary-edit" data-act="edit-review" data-id="${esc(l.id)}">${l.review ? "Bewerk review" : "Review"}</button>` : ""}
+        <a class="m" href="${linkTo(typeOf(l), l.tmdb_id)}"><div class="t">${esc(l.title)}</div><div class="stars" style="font-size:12px">${starText(l.rating)}${l.liked ? ' <span class="heart">♥</span>' : ""}</div>${l.service ? `<span class="chip diary-service">${esc(l.service)}</span>` : ""}${l.review ? `<div class="review diary-review">${esc(l.review)}</div>` : ""}</a>
+        ${P.isMe ? `<button type="button" class="btn small diary-edit" data-act="edit-review" data-id="${esc(l.id)}">${l.review ? "Bewerk" : "Review"}</button>` : ""}
       </div>`).join("")
       : `<div class="empty"><p class="muted" style="margin:0">${P.isMe ? "Je hebt nog niets gelogd." : "Nog niets gelogd."}</p>${P.isMe ? '<a class="btn accent" href="#ontdek">Film of serie zoeken</a>' : ""}</div>`;
   }
@@ -730,6 +757,7 @@
       case "episode": { const d = el.querySelector(".ep-more"); if (d) { d.hidden = !d.hidden; el.setAttribute("aria-expanded", !d.hidden); } break; }
       case "log": openLog(); break;
       case "seen": markSeen(el); break;
+      case "favorite": toggleFavorite(el); break;
       case "edit-review": openReviewEditor(el.dataset.id); break;
       case "save-review": saveReview(el); break;
       case "watchlist": toggleWatchlist(el); break;
