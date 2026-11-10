@@ -754,7 +754,7 @@
         <div><b>${followers.count ?? 0}</b><span>volgers</span></div>
         <div><b>${following.count ?? 0}</b><span>volgend</span></div>
       </div>
-      <div class="seg" role="tablist">
+      <div class="seg profile-tabs" role="tablist" style="grid-template-columns:repeat(${isMe ? 3 : 2},minmax(0,1fr))">
         ${[["dagboek", "Dagboek"], ...(isMe ? [["gezien", "Gekeken"]] : []), ["kijklijst", "Kijklijst"]].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
       </div>
       <div id="ptab-body" style="margin-top:12px">${profileTab()}</div>`;
