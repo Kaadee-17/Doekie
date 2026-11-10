@@ -355,11 +355,12 @@
   // ---------- Filmpagina ----------
   async function viewFilm(id, type) {
     id = Number(id);
-    const [m, wl, friends, myLogs] = await Promise.all([
+    const [m, wl, friends, myLogs, episodeProgress] = await Promise.all([
       tmdb(`${type}/${id}`, { append_to_response: "videos,credits,watch/providers", include_video_language: "nl,en" }),
       sb.from("watchlist").select("tmdb_id").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).maybeSingle(),
       followingIds().then((ids) => sb.from("logs").select("*, profiles(username, display_name)").eq("media_type", type).eq("tmdb_id", id).in("user_id", [S.me.id, ...ids]).order("created_at", { ascending: false }).limit(20)),
-      sb.from("logs").select("*").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).order("watched_on", { ascending: false }).order("created_at", { ascending: false }).limit(1)
+      sb.from("logs").select("*").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).order("watched_on", { ascending: false }).order("created_at", { ascending: false }).limit(1),
+      type === "tv" ? sb.from("episode_progress").select("season_number, episode_number, watched_at").eq("user_id", S.me.id).eq("tmdb_id", id) : Promise.resolve({ data: [], error: null })
     ]);
     m.media_type = type;
     S.film = m;
@@ -393,6 +394,8 @@
     S.filmSeen = !!myLogs.data?.length;
     S.filmLog = myLogs.data?.[0] || null;
     S.filmLiked = !!S.filmLog?.liked;
+    S.episodeProgress = new Set((episodeProgress.data || []).map((e) => `${e.season_number}:${e.episode_number}`));
+    S.episodeProgressUnavailable = !!episodeProgress.error;
     return `
       <div class="hero" style="background-image:${m.backdrop_path ? `url('${IMG}w780${esc(m.backdrop_path)}')` : "none"}">
         <button class="back" data-act="back" aria-label="Terug">${icon.back}</button>
@@ -434,12 +437,95 @@
     const list = [...regular, ...specials];
     if (S.seasonFor !== m.id) { S.seasonFor = m.id; S.season = null; }
     if (!list.some((s) => s.season_number === S.season)) S.season = (regular[0] || list[0]).season_number;
-    const label = (s) => (s.season_number === 0 ? "Specials" : `Seizoen ${s.season_number}`);
+    const label = (s) => `${s.season_number === 0 ? "Specials" : `Seizoen ${s.season_number}`} · ${seasonWatchedCount(s)}/${s.episode_count}`;
     return `<div class="section">
-      <div class="section-head"><h2 class="h2">Afleveringen</h2><span class="muted" style="font-size:13px">${regular.length} ${regular.length === 1 ? "seizoen" : "seizoenen"}</span></div>
+      <div class="section-head season-head"><div><h2 class="h2">Afleveringen</h2><span class="muted" style="font-size:13px">${regular.length} ${regular.length === 1 ? "seizoen" : "seizoenen"}</span></div><button type="button" class="btn small" data-act="season-all" data-n="${S.season}" ${S.episodeProgressUnavailable ? "disabled" : ""}>${seasonWatchedCount(list.find((s) => s.season_number === S.season)) === (list.find((s) => s.season_number === S.season)?.episode_count || 0) ? "Vinkjes wissen" : "Seizoen afvinken"}</button></div>
       <div class="chips" role="group" aria-label="Kies een seizoen">${list.map((s) => `<button type="button" class="chip" data-act="season" data-n="${s.season_number}" aria-pressed="${s.season_number === S.season}">${label(s)}</button>`).join("")}</div>
+      <div id="progress-summary" class="progress-summary">${S.episodeProgressUnavailable ? "Afleveringsvoortgang laden lukte niet. Controleer of de database is bijgewerkt." : episodeProgressSummary(m)}</div>
       <div id="episodes" class="stack" style="margin-top:12px;gap:8px"><p class="muted">Laden…</p></div>
     </div>`;
+  }
+  function seasonWatchedCount(s) {
+    if (!s || !S.episodeProgress) return 0;
+    let count = 0;
+    for (let i = 1; i <= s.episode_count; i++) if (S.episodeProgress.has(`${s.season_number}:${i}`)) count++;
+    return count;
+  }
+  function episodeProgressSummary(m) {
+    const seasons = (m.seasons || []).filter((s) => s.episode_count > 0).sort((a, b) => (a.season_number === 0 ? 1 : a.season_number) - (b.season_number === 0 ? 1 : b.season_number));
+    const total = seasons.reduce((n, s) => n + s.episode_count, 0);
+    const watched = S.episodeProgress?.size || 0;
+    let next = null;
+    for (const s of seasons) {
+      for (let n = 1; n <= s.episode_count; n++) {
+        if (!S.episodeProgress?.has(`${s.season_number}:${n}`)) { next = { season: s.season_number, episode: n }; break; }
+      }
+      if (next) break;
+    }
+    const where = next ? `Volgende: ${next.season === 0 ? "special" : `seizoen ${next.season}`}, aflevering ${next.episode}` : "Alle bekende afleveringen afgevinkt";
+    return `${watched} van ${total} afleveringen gezien${watched ? ` · ${where}` : " · Nog niet begonnen"}`;
+  }
+  function updateEpisodeProgressUI() {
+    const m = S.film;
+    const summary = document.getElementById("progress-summary");
+    if (!m || !summary) return;
+    summary.textContent = episodeProgressSummary(m);
+    document.querySelectorAll("[data-act=season]").forEach((btn) => {
+      const season = (m.seasons || []).find((s) => s.season_number === Number(btn.dataset.n));
+      if (!season) return;
+      const count = seasonWatchedCount(season);
+      btn.textContent = `${season.season_number === 0 ? "Specials" : `Seizoen ${season.season_number}`} · ${count}/${season.episode_count}`;
+    });
+    const seasonButton = document.querySelector('[data-act="season-all"]');
+    const current = (m.seasons || []).find((s) => s.season_number === Number(seasonButton?.dataset.n));
+    if (seasonButton && current) seasonButton.textContent = seasonWatchedCount(current) === current.episode_count ? "Vinkjes wissen" : "Seizoen afvinken";
+    document.querySelectorAll(".episode-toggle").forEach((btn) => {
+      const watched = S.episodeProgress.has(`${btn.dataset.season}:${btn.dataset.episode}`);
+      btn.setAttribute("aria-pressed", String(watched));
+      btn.textContent = watched ? "✓ Gezien" : "+ Gezien";
+      btn.setAttribute("aria-label", `${watched ? "Markeer niet gezien" : "Markeer als gezien"}: aflevering ${btn.dataset.episode}`);
+    });
+  }
+  async function toggleSeason(btn) {
+    const m = S.film;
+    const seasonNumber = Number(btn.dataset.n);
+    const season = (m?.seasons || []).find((s) => s.season_number === seasonNumber);
+    if (!m || !season || S.episodeProgressUnavailable) return;
+    const complete = seasonWatchedCount(season) === season.episode_count;
+    btn.disabled = true;
+    const query = complete
+      ? sb.from("episode_progress").delete().eq("user_id", S.me.id).eq("tmdb_id", m.id).eq("season_number", seasonNumber)
+      : sb.from("episode_progress").upsert(Array.from({ length: season.episode_count }, (_, i) => ({ user_id: S.me.id, tmdb_id: m.id, season_number: seasonNumber, episode_number: i + 1, series_title: titleOf(m), poster_path: m.poster_path, watched_at: new Date().toISOString() })), { onConflict: "user_id,tmdb_id,season_number,episode_number" });
+    const { error } = await query;
+    btn.disabled = false;
+    if (error) return fail(error, "Seizoensvoortgang opslaan lukte niet.");
+    for (let i = 1; i <= season.episode_count; i++) {
+      const key = `${seasonNumber}:${i}`;
+      if (complete) S.episodeProgress.delete(key); else S.episodeProgress.add(key);
+    }
+    updateEpisodeProgressUI();
+    toast(complete ? "Seizoensvinkjes gewist" : "Seizoen als gezien opgeslagen");
+  }
+  async function toggleEpisode(btn) {
+    const m = S.film;
+    if (!m || S.episodeProgressUnavailable) return;
+    const season = Number(btn.dataset.season), episode = Number(btn.dataset.episode);
+    const key = `${season}:${episode}`;
+    const wasWatched = S.episodeProgress.has(key);
+    btn.disabled = true;
+    const query = wasWatched
+      ? sb.from("episode_progress").delete().eq("user_id", S.me.id).eq("tmdb_id", m.id).eq("season_number", season).eq("episode_number", episode)
+      : sb.from("episode_progress").upsert({ user_id: S.me.id, tmdb_id: m.id, season_number: season, episode_number: episode, series_title: titleOf(m), poster_path: m.poster_path, watched_at: new Date().toISOString() }, { onConflict: "user_id,tmdb_id,season_number,episode_number" });
+    const { error } = await query;
+    btn.disabled = false;
+    if (error) return fail(error, "Afleveringsvoortgang opslaan lukte niet.");
+    if (wasWatched) S.episodeProgress.delete(key); else S.episodeProgress.add(key);
+    const isWatched = !wasWatched;
+    btn.setAttribute("aria-pressed", String(isWatched));
+    btn.setAttribute("aria-label", `${isWatched ? "Markeer niet gezien" : "Markeer als gezien"}: aflevering ${episode}`);
+    btn.textContent = isWatched ? "✓ Gezien" : "+ Gezien";
+    updateEpisodeProgressUI();
+    toast(isWatched ? "Aflevering als gezien opgeslagen" : "Aflevering uit voortgang gehaald");
   }
   async function loadSeason(n) {
     const box = document.getElementById("episodes"); const m = S.film;
@@ -452,16 +538,21 @@
     if (!eps.length) { box.innerHTML = `<p class="muted">Nog geen afleveringen bekend.</p>`; return; }
     const fmt = (d) => (d ? new Date(d + "T12:00").toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" }) : "");
     const intro = s.overview ? `<p class="soft" style="margin:0 0 4px;font-size:14px">${esc(s.overview)}</p>` : "";
-    box.innerHTML = intro + eps.map((e) => `
-      <button type="button" data-act="episode" aria-expanded="false" style="display:flex;gap:12px;width:100%;text-align:left;padding:10px;border-radius:16px;border:1px solid var(--line);background:var(--surface);color:var(--ink);align-items:flex-start">
-        <div style="width:120px;flex:none;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:var(--surface-2)">${e.still_path ? `<img src="${IMG}w300${esc(e.still_path)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover">` : ""}</div>
+    box.innerHTML = intro + eps.map((e) => {
+      const isWatched = S.episodeProgress.has(`${n}:${e.episode_number}`);
+      return `<div class="episode-row">
+        <button type="button" class="episode-info" data-act="episode" aria-expanded="false">
+        <div class="episode-still">${e.still_path ? `<img src="${IMG}w300${esc(e.still_path)}" alt="" loading="lazy">` : ""}</div>
         <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:3px">
           <span style="font-size:12px;color:var(--muted)">Aflevering ${e.episode_number}${e.runtime ? " · " + e.runtime + " min" : ""}</span>
           <span style="font-weight:600;line-height:1.25">${esc(e.name || "Aflevering " + e.episode_number)}</span>
           <span style="font-size:12px;color:var(--muted)">${fmt(e.air_date)}</span>
           ${e.overview ? `<span class="ep-more" hidden style="font-size:13px;color:var(--soft);margin-top:4px">${esc(e.overview)}</span>` : ""}
         </div>
-      </button>`).join("");
+        </button>
+        <button type="button" class="chip episode-toggle" data-act="toggle-episode" data-season="${n}" data-episode="${e.episode_number}" data-name="${esc(e.name || "Aflevering " + e.episode_number)}" aria-pressed="${isWatched}" aria-label="${isWatched ? "Markeer niet gezien" : "Markeer als gezien"}: aflevering ${e.episode_number}" ${S.episodeProgressUnavailable ? "disabled" : ""}>${isWatched ? "✓ Gezien" : "+ Gezien"}</button>
+      </div>`;
+    }).join("");
   }
 
   function openSheet(html) {
@@ -587,15 +678,17 @@
     const { data: p } = await sb.from("profiles").select("*").eq("username", username).maybeSingle();
     if (!p) return `<div class="center"><h1 class="h2">Dit profiel bestaat niet</h1><a class="btn" href="#feed">Naar je feed</a></div>`;
     const isMe = p.id === S.me.id;
-    const [logs, followers, following, amFollowing, wl] = await Promise.all([
+    const [logs, followers, following, amFollowing, wl, episodes, favorites] = await Promise.all([
       sb.from("logs").select("*").eq("user_id", p.id).order("watched_on", { ascending: false }).order("created_at", { ascending: false }).limit(500),
       sb.from("follows").select("*", { count: "exact", head: true }).eq("followee", p.id),
       sb.from("follows").select("*", { count: "exact", head: true }).eq("follower", p.id),
       isMe ? Promise.resolve({ data: null }) : sb.from("follows").select("follower").eq("follower", S.me.id).eq("followee", p.id).maybeSingle(),
-      isMe ? sb.from("watchlist").select("*").eq("user_id", p.id).order("created_at", { ascending: false }) : Promise.resolve({ data: [] })
+      isMe ? sb.from("watchlist").select("*").eq("user_id", p.id).order("created_at", { ascending: false }) : Promise.resolve({ data: [] }),
+      isMe ? sb.from("episode_progress").select("tmdb_id, season_number, episode_number, series_title, poster_path, watched_at").eq("user_id", p.id).order("watched_at", { ascending: false }).limit(2000) : Promise.resolve({ data: [] }),
+      isMe ? sb.from("logs").select("*").eq("user_id", p.id).eq("liked", true).order("watched_on", { ascending: false }).order("created_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [] })
     ]);
     const L = logs.data || [];
-    S.profile = { p, isMe, logs: L, watchlist: wl.data || [], tab: S.profile?.p?.id === p.id ? S.profile.tab : "dagboek", following: !!amFollowing.data, seenQuery: "" };
+    S.profile = { p, isMe, logs: L, favorites: favorites.data || [], episodeProgress: episodes.data || [], watchlist: wl.data || [], tab: S.profile?.p?.id === p.id ? S.profile.tab : "dagboek", following: !!amFollowing.data, seenQuery: "" };
     const yr = String(new Date().getFullYear());
     return `
       <div class="row" style="justify-content:flex-end;min-height:44px">${isMe ? `<a class="x" href="#instellingen" aria-label="Instellingen">${icon.gear}</a>` : ""}</div>
@@ -608,7 +701,7 @@
         <div><b>${following.count ?? 0}</b><span>volgend</span></div>
       </div>
       <div class="seg" role="tablist">
-        ${[["dagboek", "Dagboek"], ...(isMe ? [["gezien", "Gekeken films"]] : []), ["kijklijst", "Kijklijst"], ["stats", "Statistiek"]].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
+        ${[["dagboek", "Dagboek"], ...(isMe ? [["gezien", "Gekeken"]] : []), ["kijklijst", "Kijklijst"], ["stats", "Statistiek"]].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
       </div>
       <div id="ptab-body" style="margin-top:12px">${profileTab()}</div>`;
   }
@@ -617,9 +710,16 @@
     if (P.tab === "gezien") {
       const unique = new Map();
       for (const l of P.logs) if (!unique.has(`${l.media_type}:${l.tmdb_id}`)) unique.set(`${l.media_type}:${l.tmdb_id}`, l);
+      for (const l of P.favorites) if (!unique.has(`${l.media_type}:${l.tmdb_id}`)) unique.set(`${l.media_type}:${l.tmdb_id}`, l);
+      const episodeCounts = new Map();
+      for (const e of P.episodeProgress) {
+        const key = `tv:${e.tmdb_id}`;
+        episodeCounts.set(key, (episodeCounts.get(key) || 0) + 1);
+        if (!unique.has(key)) unique.set(key, { media_type: "tv", tmdb_id: e.tmdb_id, title: e.series_title, poster_path: e.poster_path });
+      }
       const q = (P.seenQuery || "").trim().toLocaleLowerCase("nl");
       const watched = [...unique.values()].filter((l) => !q || (l.title || "").toLocaleLowerCase("nl").includes(q)).sort((a, b) => (a.title || "").localeCompare(b.title || "", "nl"));
-      const tiles = watched.map((l) => `<a class="tile" href="${linkTo(typeOf(l), l.tmdb_id)}">${poster(l.poster_path)}<span class="t">${esc(l.title)}</span><span class="y">${typeOf(l) === "tv" ? "Serie" : "Film"}${l.year ? ` · ${l.year}` : ""}</span></a>`).join("");
+      const tiles = watched.map((l) => `<a class="tile" href="${linkTo(typeOf(l), l.tmdb_id)}">${poster(l.poster_path)}<span class="t">${esc(l.title)}</span><span class="y">${typeOf(l) === "tv" ? `Serie${episodeCounts.has(`tv:${l.tmdb_id}`) ? ` · ${episodeCounts.get(`tv:${l.tmdb_id}`)} afl. gezien` : ""}` : "Film"}${l.year ? ` · ${l.year}` : ""}</span></a>`).join("");
       return `<div class="stack" style="gap:12px"><input class="input" id="zoek-gezien" type="search" placeholder="Zoek een film of serie" aria-label="Zoek in je bekeken films en series" value="${esc(P.seenQuery)}"><div id="gezien-results">${tiles ? `<div class="grid">${tiles}</div>` : `<div class="empty"><p class="muted" style="margin:0">${q ? "Geen bekeken films of series gevonden." : "Je hebt nog geen films of series als gezien gemarkeerd."}</p></div>`}</div></div>`;
     }
     if (P.tab === "kijklijst") {
@@ -639,8 +739,8 @@
     return P.logs.length ? P.logs.map((l) => `<div class="diary-row">
         <div class="d"><b>${new Date(l.watched_on + "T12:00").getDate()}</b>${esc(fmtDay(l.watched_on).split(" ")[1] || "")}</div>
         <a class="thumb" href="${linkTo(typeOf(l), l.tmdb_id)}">${poster(l.poster_path, "w92")}</a>
-        <a class="m" href="${linkTo(typeOf(l), l.tmdb_id)}"><div class="t">${esc(l.title)}</div><div class="stars" style="font-size:12px">${starText(l.rating)}${l.liked ? ' <span class="heart">♥</span>' : ""}</div>${l.service ? `<span class="chip diary-service">${esc(l.service)}</span>` : ""}${l.review ? `<div class="review diary-review">${esc(l.review)}</div>` : ""}</a>
-        ${P.isMe ? `<button type="button" class="btn small diary-edit" data-act="edit-review" data-id="${esc(l.id)}">${l.review ? "Bewerk" : "Review"}</button>` : ""}
+        <a class="m" href="${linkTo(typeOf(l), l.tmdb_id)}"><div class="t">${esc(l.title)}</div><div class="stars" style="font-size:12px">${starText(l.rating)}${l.liked ? ' <span class="heart">♥</span>' : ""}</div>${l.review ? `<div class="review diary-review">${esc(l.review)}</div>` : ""}</a>
+        ${P.isMe ? `<button type="button" class="btn small diary-edit" data-act="edit-review" data-id="${esc(l.id)}">${l.review ? "Bewerk review" : "Review toevoegen"}</button>` : ""}
       </div>`).join("")
       : `<div class="empty"><p class="muted" style="margin:0">${P.isMe ? "Je hebt nog niets gelogd." : "Nog niets gelogd."}</p>${P.isMe ? '<a class="btn accent" href="#ontdek">Film of serie zoeken</a>' : ""}</div>`;
   }
@@ -750,11 +850,16 @@
       case "trailer": openTrailer(); break;
       case "season": {
         S.season = Number(el.dataset.n);
+        const seasonAll = document.querySelector('[data-act="season-all"]');
+        if (seasonAll) seasonAll.dataset.n = String(S.season);
         document.querySelectorAll("[data-act=season]").forEach((b) => b.setAttribute("aria-pressed", b === el));
+        updateEpisodeProgressUI();
         loadSeason(S.season);
         break;
       }
+      case "season-all": toggleSeason(el); break;
       case "episode": { const d = el.querySelector(".ep-more"); if (d) { d.hidden = !d.hidden; el.setAttribute("aria-expanded", !d.hidden); } break; }
+      case "toggle-episode": toggleEpisode(el); break;
       case "log": openLog(); break;
       case "seen": markSeen(el); break;
       case "favorite": toggleFavorite(el); break;
