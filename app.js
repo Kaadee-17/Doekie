@@ -8,7 +8,7 @@
   const sheetRoot = document.getElementById("sheet-root");
   const IMG = "https://image.tmdb.org/t/p/";
   const EXTRA = ["Bioscoop", "Dvd / Blu-ray", "Anders"];
-  const COLORS = ["#9B5CF6", "#2CB5A0", "#E5484D", "#3E9BF0", "#F5A524", "#FF4D8D", "#5B6CFF"];
+  const COLORS = ["#9B5CF6", "#2CB5A0", "#E5484D", "#3E9BF0", "#F5A524", "#35D47A", "#5B6CFF"];
 
   if (!cfg.supabaseUrl || cfg.supabaseUrl.includes("JOUW-PROJECT") || !window.supabase) {
     app.innerHTML = `<div class="center"><div class="logo">doekie<span>.</span></div>
@@ -93,7 +93,7 @@
   const titleOf = (m) => m?.title || m?.name || "";
   const dateOf = (m) => m?.release_date || m?.first_air_date || "";
   const linkTo = (type, id) => `#${type === "tv" ? "serie" : "film"}/${id}`;
-  const tvTag = (type) => (type === "tv" ? '<span style="display:inline-block;font-family:Inter,sans-serif;font-size:11px;font-weight:700;color:#FF8AB4;background:rgba(255,77,141,0.14);padding:1px 7px;border-radius:999px;margin-left:6px;vertical-align:middle">Serie</span>' : "");
+  const tvTag = (type) => (type === "tv" ? '<span style="display:inline-block;font-family:Inter,sans-serif;font-size:11px;font-weight:700;color:var(--green-light);background:var(--green-soft);padding:1px 7px;border-radius:999px;margin-left:6px;vertical-align:middle">Serie</span>' : "");
   const onlyTitles = (list) => (list || []).filter((m) => m.media_type === "movie" || m.media_type === "tv");
 
   // ---------- Opstarten en inloggen ----------
@@ -254,7 +254,7 @@
     const head = `<div class="row" style="justify-content:space-between;margin-bottom:16px"><div class="logo" style="font-size:34px">doekie<span>.</span></div><a class="btn small" href="#vrienden">Uitnodigen</a></div>`;
     if (!data.length) {
       return head + `<div class="empty"><h2 class="h2">Je feed is nog leeg</h2><p class="muted" style="margin:0">Log je eerste film of serie, of nodig vrienden uit. Dan zie je hier wat jullie kijken.</p>
-        <div class="row wrap" style="justify-content:center"><a class="btn pink" href="#ontdek">Zoeken</a><a class="btn" href="#vrienden">Vrienden uitnodigen</a></div></div>`;
+        <div class="row wrap" style="justify-content:center"><a class="btn accent" href="#ontdek">Zoeken</a><a class="btn" href="#vrienden">Vrienden uitnodigen</a></div></div>`;
     }
     return head + `<div class="stack">${data.map(logCard).join("")}</div>`;
   }
@@ -405,7 +405,7 @@
         </div>
       </div>
       <div class="row film-actions" style="margin-top:18px">
-        <button class="btn pink" style="flex:1" data-act="seen" aria-pressed="${S.filmSeen}">${S.filmSeen ? "✓ Gezien" : "○ Gezien"}</button>
+        <button class="btn accent" style="flex:1" data-act="seen" aria-pressed="${S.filmSeen}">${S.filmSeen ? "✓ Gezien" : "○ Gezien"}</button>
         <button class="btn" style="flex:1" data-act="log">+ Recensie</button>
         <button class="btn" style="flex:1" data-act="watchlist" aria-pressed="${S.filmInList}">${S.filmInList ? "✓ Op kijklijst" : "+ Kijklijst"}</button>
       </div>
@@ -572,7 +572,7 @@
     return `
       <div class="row" style="justify-content:flex-end;min-height:44px">${isMe ? `<a class="x" href="#instellingen" aria-label="Instellingen">${icon.gear}</a>` : ""}</div>
       <div class="profile-head">${avatar(p, true)}<div style="min-width:0"><h1 class="h1" style="font-size:24px">${esc(p.display_name || p.username)}</h1><div class="muted">@${esc(p.username)}</div></div></div>
-      ${isMe ? "" : `<button class="btn ${S.profile.following ? "" : "pink"} block" style="margin-top:14px" data-act="follow">${S.profile.following ? "Volgend" : "Volgen"}</button>`}
+      ${isMe ? "" : `<button class="btn ${S.profile.following ? "" : "accent"} block" style="margin-top:14px" data-act="follow">${S.profile.following ? "Volgend" : "Volgen"}</button>`}
       <div class="counts">
         <div><b>${L.length}</b><span>gelogd</span></div>
         <div><b>${L.filter((l) => (l.watched_on || "").startsWith(yr)).length}</b><span>in ${yr}</span></div>
@@ -608,13 +608,14 @@
         ${rows.map(([n, c]) => `<div class="bar"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n)}</span><span class="track"><span class="fill" style="width:${(c / max) * 100}%"></span></span><span class="num">${c}</span></div>`).join("")}
         <span class="muted">Gemiddeld ★ ${avg} · ${P.logs.filter((l) => l.liked).length} favorieten</span></div>`;
     }
-    return P.logs.length ? P.logs.map((l) => `<a class="diary-row" href="${linkTo(typeOf(l), l.tmdb_id)}">
+    return P.logs.length ? P.logs.map((l) => `<div class="diary-row">
         <div class="d"><b>${new Date(l.watched_on + "T12:00").getDate()}</b>${esc(fmtDay(l.watched_on).split(" ")[1] || "")}</div>
-        <div class="thumb">${poster(l.poster_path, "w92")}</div>
-        <div class="m"><div class="t">${esc(l.title)}</div><div class="stars" style="font-size:12px">${starText(l.rating)}${l.liked ? ' <span class="heart">♥</span>' : ""}</div></div>
-        ${l.service ? `<span class="chip" style="height:26px;font-size:11px">${esc(l.service)}</span>` : ""}
-      </a>`).join("")
-      : `<div class="empty"><p class="muted" style="margin:0">${P.isMe ? "Je hebt nog niets gelogd." : "Nog niets gelogd."}</p>${P.isMe ? '<a class="btn pink" href="#ontdek">Film of serie zoeken</a>' : ""}</div>`;
+        <a class="thumb" href="${linkTo(typeOf(l), l.tmdb_id)}">${poster(l.poster_path, "w92")}</a>
+        <a class="m" href="${linkTo(typeOf(l), l.tmdb_id)}"><div class="t">${esc(l.title)}</div><div class="stars" style="font-size:12px">${starText(l.rating)}${l.liked ? ' <span class="heart">♥</span>' : ""}</div>${l.review ? `<div class="review diary-review">${esc(l.review)}</div>` : ""}</a>
+        ${l.service ? `<span class="chip diary-service" style="height:26px;font-size:11px">${esc(l.service)}</span>` : ""}
+        ${P.isMe ? `<button type="button" class="btn small diary-edit" data-act="edit-review" data-id="${esc(l.id)}">${l.review ? "Bewerk review" : "Review"}</button>` : ""}
+      </div>`).join("")
+      : `<div class="empty"><p class="muted" style="margin:0">${P.isMe ? "Je hebt nog niets gelogd." : "Nog niets gelogd."}</p>${P.isMe ? '<a class="btn accent" href="#ontdek">Film of serie zoeken</a>' : ""}</div>`;
   }
   async function toggleFollow(btn) {
     const P = S.profile; btn.disabled = true;
@@ -624,6 +625,29 @@
     const { error } = await q;
     if (error) { btn.disabled = false; return fail(error); }
     route();
+  }
+
+  function openReviewEditor(id) {
+    const log = S.profile?.logs.find((l) => String(l.id) === String(id));
+    if (!log || !S.profile.isMe) return;
+    S.editingLog = log;
+    openSheet(`<div class="sheet-head"><div><div class="label">${log.review ? "Recensie aanpassen" : "Recensie toevoegen"}</div><h2 class="h2">${esc(log.title)}</h2></div><button class="x" data-act="close" aria-label="Sluiten">${icon.x}</button></div>
+      <label class="stack" style="gap:6px"><span class="label">Recensie</span><textarea class="input" id="edit-review" maxlength="2000" placeholder="Wat vond je ervan?">${esc(log.review || "")}</textarea></label>
+      <button class="btn primary block" data-act="save-review">Recensie opslaan</button>`);
+  }
+
+  async function saveReview(btn) {
+    const log = S.editingLog;
+    if (!log || !S.profile?.isMe) return;
+    btn.disabled = true;
+    const review = document.getElementById("edit-review").value.trim() || null;
+    const { error } = await sb.from("logs").update({ review }).eq("id", log.id).eq("user_id", S.me.id);
+    if (error) { btn.disabled = false; return fail(error, "Recensie opslaan lukte niet."); }
+    log.review = review;
+    S.editingLog = null;
+    closeSheet();
+    document.getElementById("ptab-body").innerHTML = profileTab();
+    toast("Recensie bijgewerkt");
   }
 
   // ---------- Vrienden ----------
@@ -706,6 +730,8 @@
       case "episode": { const d = el.querySelector(".ep-more"); if (d) { d.hidden = !d.hidden; el.setAttribute("aria-expanded", !d.hidden); } break; }
       case "log": openLog(); break;
       case "seen": markSeen(el); break;
+      case "edit-review": openReviewEditor(el.dataset.id); break;
+      case "save-review": saveReview(el); break;
       case "watchlist": toggleWatchlist(el); break;
       case "close": case "sheet-bg": closeSheet(); break;
       case "star": { const n = Number(el.dataset.n); S.log.rating = S.log.rating === n ? n - 0.5 : n; renderLogSheet(); break; }
