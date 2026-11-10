@@ -476,8 +476,8 @@
         <button class="btn" style="flex:1" data-act="watchlist" aria-pressed="${S.filmInList}">${S.filmInList ? "✓ Op kijklijst" : "+ Kijklijst"}</button>
       </div>
       ${m.overview ? `<p class="overview">${esc(m.overview)}</p>` : ""}
-      ${relatedSection}
       ${isTv ? seasonsSection(m) : ""}
+      ${relatedSection}
       <div class="section">
         <div class="section-head"><h2 class="h2">Waar te zien in Nederland</h2><span class="source">Bron: JustWatch</span></div>
         <div class="stack" style="gap:8px">${provs.length ? provs.join("") : `<p class="muted" style="margin:0">Deze ${what} staat nu niet bij een Nederlandse dienst.</p>`}</div>
