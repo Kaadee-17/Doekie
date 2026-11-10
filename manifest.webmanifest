@@ -1,0 +1,14 @@
+{
+  "name": "Doekie",
+  "short_name": "Doekie",
+  "description": "Zie wat je vrienden kijken en waar een film staat.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#08090C",
+  "theme_color": "#08090C",
+  "lang": "nl",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
