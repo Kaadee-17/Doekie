@@ -355,13 +355,14 @@
   // ---------- Filmpagina ----------
   async function viewFilm(id, type) {
     id = Number(id);
-    const [m, wl, friends, myLogs, episodeProgress, related] = await Promise.all([
+    const [m, wl, friends, myLogs, episodeProgress, recommendations, similar] = await Promise.all([
       tmdb(`${type}/${id}`, { append_to_response: "videos,credits,watch/providers", include_video_language: "nl,en" }),
       sb.from("watchlist").select("tmdb_id").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).maybeSingle(),
       followingIds().then((ids) => sb.from("logs").select("*, profiles(username, display_name)").eq("media_type", type).eq("tmdb_id", id).in("user_id", [S.me.id, ...ids]).order("created_at", { ascending: false }).limit(20)),
       sb.from("logs").select("*").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).order("watched_on", { ascending: false }).order("created_at", { ascending: false }).limit(1),
       type === "tv" ? sb.from("episode_progress").select("season_number, episode_number, watched_at").eq("user_id", S.me.id).eq("tmdb_id", id) : Promise.resolve({ data: [], error: null }),
-      tmdb(`${type}/${id}/recommendations`).catch(() => ({ results: [] }))
+      tmdb(`${type}/${id}/recommendations`).catch(() => ({ results: [] })),
+      tmdb(`${type}/${id}/similar`).catch(() => ({ results: [] }))
     ]);
     m.media_type = type;
     S.film = m;
@@ -390,8 +391,13 @@
     const fl = friends.data || [];
     const rated = fl.filter((l) => l.rating);
     const avg = rated.length ? (rated.reduce((s, l) => s + Number(l.rating), 0) / rated.length).toFixed(1).replace(".", ",") : null;
-    const relatedItems = (related.results || []).filter((item) => item.poster_path).slice(0, 9).map((item) => ({ ...item, media_type: type }));
-    const relatedSection = relatedItems.length ? `<div class="section"><div class="section-head"><h2 class="h2">Meer zoals deze ${what}</h2></div><div class="grid">${relatedItems.map((item) => `<a class="tile" href="${linkTo(type, item.id)}">${poster(item.poster_path)}<span class="t">${esc(titleOf(item))}</span><span class="y">${yearOf(dateOf(item))}</span></a>`).join("")}</div></div>` : "";
+    const relatedItems = [...(recommendations.results || []), ...(similar.results || [])]
+      .filter((item, index, all) => item.poster_path && item.id !== id && all.findIndex((candidate) => candidate.id === item.id) === index)
+      .slice(0, 9)
+      .map((item) => ({ ...item, media_type: type }));
+    const relatedSection = `<div class="section"><div class="section-head"><h2 class="h2">Meer zoals deze ${what}</h2></div>${relatedItems.length
+      ? `<div class="grid">${relatedItems.map((item) => `<a class="tile" href="${linkTo(type, item.id)}">${poster(item.poster_path)}<span class="t">${esc(titleOf(item))}</span><span class="y">${yearOf(dateOf(item))}</span></a>`).join("")}</div>`
+      : `<p class="muted">Op dit moment zijn er geen vergelijkbare titels beschikbaar.</p>`}</div>`;
     S.filmTrailer = trailer?.key || null;
     S.filmInList = !!wl.data;
     S.filmSeen = !!myLogs.data?.length;
