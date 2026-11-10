@@ -1,7 +1,7 @@
 // Doekie service worker, versie 2.
 // Haalt altijd eerst de nieuwste versie op (zonder browsercache),
 // en valt terug op de opgeslagen versie als er geen internet is.
-const CACHE = "doekie-v2";
+const CACHE = "doekie-v3";
 const SHELL = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest", "icon.svg"];
 
 self.addEventListener("install", (e) => {
