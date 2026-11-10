@@ -7,7 +7,7 @@
   const tabbar = document.getElementById("tabbar");
   const sheetRoot = document.getElementById("sheet-root");
   const IMG = "https://image.tmdb.org/t/p/";
-  const EXTRA = ["Bioscoop", "Dvd / Blu-ray", "Anders"];
+  const EXTRA = ["Bioscoop", "Streaming", "DVD / Blu-ray"];
   const COLORS = ["#9B5CF6", "#2CB5A0", "#E5484D", "#3E9BF0", "#F5A524", "#35D47A", "#5B6CFF"];
 
   if (!cfg.supabaseUrl || cfg.supabaseUrl.includes("JOUW-PROJECT") || !window.supabase) {
@@ -579,12 +579,7 @@
 
   async function openLog() {
     const m = S.film; if (!m) return;
-    const nl = m["watch/providers"]?.results?.NL || {};
-    const names = new Set();
-    for (const k of ["flatrate", "free", "ads", "rent", "buy"]) for (const p of nl[k] || []) names.add(p.provider_name);
-    try { const all = await nlProviders(); for (const p of all) if (myServices().includes(p.provider_id)) names.add(p.provider_name); } catch (_) {}
-    for (const e of EXTRA) names.add(e);
-    S.log = { rating: 0, liked: false, rewatch: false, service: [...names][0] || null, services: [...names] };
+    S.log = { rating: 0, liked: false, rewatch: false, service: "Streaming", services: EXTRA };
     renderLogSheet();
   }
   function renderLogSheet() {
@@ -711,7 +706,8 @@
       isMe ? sb.from("logs").select("*").eq("user_id", p.id).eq("liked", true).order("watched_on", { ascending: false }).order("created_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [] })
     ]);
     const L = logs.data || [];
-    S.profile = { p, isMe, logs: L, favorites: favorites.data || [], episodeProgress: episodes.data || [], watchlist: wl.data || [], tab: S.profile?.p?.id === p.id ? S.profile.tab : "dagboek", following: !!amFollowing.data, seenQuery: "" };
+    const previousTab = S.profile?.p?.id === p.id ? S.profile.tab : "dagboek";
+    S.profile = { p, isMe, logs: L, favorites: favorites.data || [], episodeProgress: episodes.data || [], watchlist: wl.data || [], tab: previousTab === "stats" ? "dagboek" : previousTab, following: !!amFollowing.data, seenQuery: "" };
     const yr = String(new Date().getFullYear());
     return `
       <div class="row" style="justify-content:flex-end;min-height:44px">${isMe ? `<a class="x" href="#instellingen" aria-label="Instellingen">${icon.gear}</a>` : ""}</div>
@@ -724,7 +720,7 @@
         <div><b>${following.count ?? 0}</b><span>volgend</span></div>
       </div>
       <div class="seg" role="tablist">
-        ${[["dagboek", "Dagboek"], ...(isMe ? [["gezien", "Gekeken"]] : []), ["kijklijst", "Kijklijst"], ["stats", "Statistiek"]].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
+        ${[["dagboek", "Dagboek"], ...(isMe ? [["gezien", "Gekeken"]] : []), ["kijklijst", "Kijklijst"]].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
       </div>
       <div id="ptab-body" style="margin-top:12px">${profileTab()}</div>`;
   }
@@ -753,16 +749,6 @@
     if (P.tab === "kijklijst") {
       return P.watchlist.length ? `<div class="grid">${P.watchlist.map((w) => `<a class="tile" href="${linkTo(typeOf(w), w.tmdb_id)}">${poster(w.poster_path)}<span class="t">${esc(w.title)}</span>${typeOf(w) === "tv" ? '<span class="y">Serie</span>' : ""}</a>`).join("")}</div>`
         : `<div class="empty"><p class="muted" style="margin:0">Je kijklijst is leeg. Tik bij een film of serie op “+ Kijklijst”.</p></div>`;
-    }
-    if (P.tab === "stats") {
-      if (!P.logs.length) return `<div class="empty"><p class="muted" style="margin:0">Nog niets gelogd.</p></div>`;
-      const per = {}; for (const l of P.logs) { const k = l.service || "Onbekend"; per[k] = (per[k] || 0) + 1; }
-      const rows = Object.entries(per).sort((a, b) => b[1] - a[1]); const max = rows[0][1];
-      const rated = P.logs.filter((l) => l.rating);
-      const avg = rated.length ? (rated.reduce((s, l) => s + Number(l.rating), 0) / rated.length).toFixed(1).replace(".", ",") : "–";
-      return `<div class="stack"><span class="soft">Waar ${P.isMe ? "je" : "er"} keek</span>
-        ${rows.map(([n, c]) => `<div class="bar"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n)}</span><span class="track"><span class="fill" style="width:${(c / max) * 100}%"></span></span><span class="num">${c}</span></div>`).join("")}
-        <span class="muted">Gemiddeld ★ ${avg} · ${P.logs.filter((l) => l.liked).length} favorieten</span></div>`;
     }
     return P.logs.length ? P.logs.map((l) => `<div class="diary-row">
         <div class="d"><b>${new Date(l.watched_on + "T12:00").getDate()}</b>${esc(fmtDay(l.watched_on).split(" ")[1] || "")}</div>
