@@ -116,6 +116,16 @@ button.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); bor
 .provider .n { flex: 1; min-width: 0; }
 .provider .k { font-size: 12px; color: var(--muted); }
 .source { font-size: 11px; color: var(--muted); }
+.progress-summary { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.season-head > div { display: flex; flex-direction: column; }
+.season-head .btn { flex: none; }
+.episode-row { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.episode-info { min-width: 0; flex: 1; display: flex; gap: 10px; align-items: flex-start; padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; }
+.episode-still { width: 88px; flex: none; aspect-ratio: 16 / 9; border-radius: 9px; overflow: hidden; background: var(--surface-2); }
+.episode-still img { width: 100%; height: 100%; object-fit: cover; }
+.episode-toggle { flex: none; padding: 0 9px; font-size: 12px; }
+.episode-toggle[aria-pressed="true"] { border-color: var(--green); background: var(--green-soft); color: var(--green-light); }
+.episode-toggle:disabled { opacity: .5; }
 
 /* Profiel */
 .profile-head { display: flex; align-items: center; gap: 14px; }
@@ -125,16 +135,16 @@ button.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); bor
 .seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: var(--surface); margin-top: 18px; }
 .seg button { height: 38px; border: 0; border-radius: 10px; background: transparent; color: var(--soft); font-size: 12px; font-weight: 600; padding: 0 3px; }
 .seg button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
-.diary-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.diary-row { display: grid; grid-template-columns: 38px 42px minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; column-gap: 10px; row-gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .diary-row .d { width: 38px; text-align: center; font-size: 12px; color: var(--muted); }
 .diary-row .d b { display: block; font-size: 18px; color: var(--ink); line-height: 1; }
-.diary-row .thumb { width: 36px; flex: none; }
+.diary-row .d, .diary-row .thumb { grid-column: auto; grid-row: 1 / span 2; }
+.diary-row .thumb { width: 42px; }
 .diary-row .thumb .poster-img, .diary-row .thumb .poster-ph { border-radius: 6px; }
-.diary-row .m { flex: 1; min-width: 0; }
+.diary-row .m { grid-column: 3; grid-row: 1; min-width: 0; }
 .diary-row .m .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.diary-row .diary-review { margin-top: 4px; font-size: 12px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.diary-row .diary-service { display: flex; width: max-content; max-width: 100%; height: 26px; margin-top: 4px; padding: 0 9px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
-.diary-edit { flex: none; height: 38px; padding: 0 10px; font-size: 12px; }
+.diary-row .diary-review { margin-top: 5px; font-size: 13px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diary-edit { grid-column: 3; grid-row: 2; justify-self: start; height: 34px; padding: 0 12px; font-size: 12px; }
 .bar { display: grid; grid-template-columns: 110px minmax(0, 1fr) 30px; gap: 10px; align-items: center; font-size: 14px; }
 .bar .track { height: 12px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
 .bar .fill { display: block; height: 100%; border-radius: 6px; background: var(--green); }
