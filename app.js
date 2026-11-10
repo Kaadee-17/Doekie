@@ -217,6 +217,7 @@
       if (id !== S.routeId) return;
       app.innerHTML = html;
       if (name === "ontdek") runSearch();
+      if (name === "serie") loadSeason(S.season);
       if (S.focusSearch) { S.focusSearch = false; document.getElementById("zoek")?.focus(); }
     } catch (e) {
       if (id !== S.routeId) return;
@@ -406,6 +407,7 @@
         <button class="btn" style="flex:1" data-act="watchlist" aria-pressed="${S.filmInList}">${S.filmInList ? "✓ Op kijklijst" : "+ Kijklijst"}</button>
       </div>
       ${m.overview ? `<p class="overview">${esc(m.overview)}</p>` : ""}
+      ${isTv ? seasonsSection(m) : ""}
       <div class="section">
         <div class="section-head"><h2 class="h2">Waar te zien in Nederland</h2><span class="source">Bron: JustWatch</span></div>
         <div class="stack" style="gap:8px">${provs.length ? provs.join("") : `<p class="muted" style="margin:0">Deze ${what} staat nu niet bij een Nederlandse dienst.</p>`}</div>
@@ -415,6 +417,45 @@
         ${fl.length ? `<div class="stack">${fl.map((l) => `<div class="row" style="align-items:flex-start">${avatar(l.profiles)}<div><div><b>${esc(l.profiles?.display_name || l.profiles?.username)}</b> <span class="stars">${starText(l.rating)}</span>${l.liked ? ' <span class="heart">♥</span>' : ""}</div>${l.review ? `<div class="soft" style="font-size:14px">${esc(l.review)}</div>` : ""}</div></div>`).join("")}</div>`
           : `<p class="muted" style="margin:0">Nog niemand die je volgt heeft deze ${what} gelogd.</p>`}
       </div>`;
+  }
+
+  // ---------- Seizoenen en afleveringen ----------
+  function seasonsSection(m) {
+    const all = (m.seasons || []).filter((s) => s.episode_count > 0);
+    if (!all.length) return "";
+    const regular = all.filter((s) => s.season_number > 0);
+    const specials = all.filter((s) => s.season_number === 0);
+    const list = [...regular, ...specials];
+    if (S.seasonFor !== m.id) { S.seasonFor = m.id; S.season = null; }
+    if (!list.some((s) => s.season_number === S.season)) S.season = (regular[0] || list[0]).season_number;
+    const label = (s) => (s.season_number === 0 ? "Specials" : `Seizoen ${s.season_number}`);
+    return `<div class="section">
+      <div class="section-head"><h2 class="h2">Afleveringen</h2><span class="muted" style="font-size:13px">${regular.length} ${regular.length === 1 ? "seizoen" : "seizoenen"}</span></div>
+      <div class="chips" role="group" aria-label="Kies een seizoen">${list.map((s) => `<button type="button" class="chip" data-act="season" data-n="${s.season_number}" aria-pressed="${s.season_number === S.season}">${label(s)}</button>`).join("")}</div>
+      <div id="episodes" class="stack" style="margin-top:12px;gap:8px"><p class="muted">Laden…</p></div>
+    </div>`;
+  }
+  async function loadSeason(n) {
+    const box = document.getElementById("episodes"); const m = S.film;
+    if (!box || !m || m.media_type !== "tv" || n == null) return;
+    box.innerHTML = `<p class="muted">Laden…</p>`;
+    let s;
+    try { s = await tmdb(`tv/${m.id}/season/${n}`); } catch (_) { box.innerHTML = `<p class="muted">Afleveringen laden lukte niet. Probeer het opnieuw.</p>`; return; }
+    if (S.season !== n || document.getElementById("episodes") !== box) return;
+    const eps = s.episodes || [];
+    if (!eps.length) { box.innerHTML = `<p class="muted">Nog geen afleveringen bekend.</p>`; return; }
+    const fmt = (d) => (d ? new Date(d + "T12:00").toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" }) : "");
+    const intro = s.overview ? `<p class="soft" style="margin:0 0 4px;font-size:14px">${esc(s.overview)}</p>` : "";
+    box.innerHTML = intro + eps.map((e) => `
+      <button type="button" data-act="episode" aria-expanded="false" style="display:flex;gap:12px;width:100%;text-align:left;padding:10px;border-radius:16px;border:1px solid var(--line);background:var(--surface);color:var(--ink);align-items:flex-start">
+        <div style="width:120px;flex:none;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:var(--surface-2)">${e.still_path ? `<img src="${IMG}w300${esc(e.still_path)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover">` : ""}</div>
+        <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:3px">
+          <span style="font-size:12px;color:var(--muted)">Aflevering ${e.episode_number}${e.runtime ? " · " + e.runtime + " min" : ""}</span>
+          <span style="font-weight:600;line-height:1.25">${esc(e.name || "Aflevering " + e.episode_number)}</span>
+          <span style="font-size:12px;color:var(--muted)">${fmt(e.air_date)}</span>
+          ${e.overview ? `<span class="ep-more" hidden style="font-size:13px;color:var(--soft);margin-top:4px">${esc(e.overview)}</span>` : ""}
+        </div>
+      </button>`).join("");
   }
 
   function openSheet(html) {
@@ -623,6 +664,13 @@
       case "ontdek-all": S.ontdekMine = false; route(); break;
       case "ontdek-mine": S.ontdekMine = true; route(); break;
       case "trailer": openTrailer(); break;
+      case "season": {
+        S.season = Number(el.dataset.n);
+        document.querySelectorAll("[data-act=season]").forEach((b) => b.setAttribute("aria-pressed", b === el));
+        loadSeason(S.season);
+        break;
+      }
+      case "episode": { const d = el.querySelector(".ep-more"); if (d) { d.hidden = !d.hidden; el.setAttribute("aria-expanded", !d.hidden); } break; }
       case "log": openLog(); break;
       case "watchlist": toggleWatchlist(el); break;
       case "close": case "sheet-bg": closeSheet(); break;
