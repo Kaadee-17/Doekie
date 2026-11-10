@@ -717,9 +717,14 @@
         episodeCounts.set(key, (episodeCounts.get(key) || 0) + 1);
         if (!unique.has(key)) unique.set(key, { media_type: "tv", tmdb_id: e.tmdb_id, title: e.series_title, poster_path: e.poster_path });
       }
+      const favoriteKeys = new Set(P.favorites.map((l) => `${l.media_type}:${l.tmdb_id}`));
       const q = (P.seenQuery || "").trim().toLocaleLowerCase("nl");
       const watched = [...unique.values()].filter((l) => !q || (l.title || "").toLocaleLowerCase("nl").includes(q)).sort((a, b) => (a.title || "").localeCompare(b.title || "", "nl"));
-      const tiles = watched.map((l) => `<a class="tile" href="${linkTo(typeOf(l), l.tmdb_id)}">${poster(l.poster_path)}<span class="t">${esc(l.title)}</span><span class="y">${typeOf(l) === "tv" ? `Serie${episodeCounts.has(`tv:${l.tmdb_id}`) ? ` · ${episodeCounts.get(`tv:${l.tmdb_id}`)} afl. gezien` : ""}` : "Film"}${l.year ? ` · ${l.year}` : ""}</span></a>`).join("");
+      const tiles = watched.map((l) => {
+        const key = `${typeOf(l)}:${l.tmdb_id}`;
+        const favorite = l.liked || favoriteKeys.has(key);
+        return `<a class="tile" href="${linkTo(typeOf(l), l.tmdb_id)}"><span class="seen-poster">${poster(l.poster_path)}${favorite ? '<span class="seen-favorite" aria-label="Favoriet">♥</span>' : ""}</span><span class="t">${esc(l.title)}</span><span class="y">${typeOf(l) === "tv" ? `Serie${episodeCounts.has(`tv:${l.tmdb_id}`) ? ` · ${episodeCounts.get(`tv:${l.tmdb_id}`)} afl. gezien` : ""}` : "Film"}${l.year ? ` · ${l.year}` : ""}</span></a>`;
+      }).join("");
       return `<div class="stack" style="gap:12px"><input class="input" id="zoek-gezien" type="search" placeholder="Zoek een film of serie" aria-label="Zoek in je bekeken films en series" value="${esc(P.seenQuery)}"><div id="gezien-results">${tiles ? `<div class="grid">${tiles}</div>` : `<div class="empty"><p class="muted" style="margin:0">${q ? "Geen bekeken films of series gevonden." : "Je hebt nog geen films of series als gezien gemarkeerd."}</p></div>`}</div></div>`;
     }
     if (P.tab === "kijklijst") {
