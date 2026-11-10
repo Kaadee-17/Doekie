@@ -266,7 +266,14 @@
       tmdb("genre/movie/list", { language: "nl-NL" }).catch(() => ({ genres: [] })),
       tmdb("genre/tv/list", { language: "nl-NL" }).catch(() => ({ genres: [] }))
     ]);
-    const genres = [...new Map([...(movieGenres.genres || []), ...(tvGenres.genres || [])].map((g) => [g.id, g])).values()].sort((a, b) => a.name.localeCompare(b.name, "nl"));
+    const fallbackGenres = [
+      [28, "Actie"], [12, "Avontuur"], [16, "Animatie"], [35, "Komedie"], [80, "Misdaad"], [99, "Documentaire"],
+      [18, "Drama"], [10751, "Familie"], [14, "Fantasy"], [36, "Geschiedenis"], [27, "Horror"], [10402, "Muziek"],
+      [9648, "Mysterie"], [10749, "Romantiek"], [878, "Sciencefiction"], [10770, "TV-film"], [53, "Thriller"],
+      [10752, "Oorlog"], [37, "Western"], [10759, "Actie & avontuur"], [10762, "Jeugd"], [10763, "Nieuws"],
+      [10764, "Reality"], [10765, "Sciencefiction & fantasy"], [10766, "Soap"], [10767, "Talkshow"], [10768, "Oorlog & politiek"]
+    ].map(([id, name]) => ({ id, name }));
+    const genres = [...new Map([...fallbackGenres, ...(movieGenres.genres || []), ...(tvGenres.genres || [])].map((g) => [g.id, g])).values()].sort((a, b) => a.name.localeCompare(b.name, "nl"));
     const F = S.discoverFilters;
     return `<h1 class="h1">Ontdek</h1>
       <div class="stack" style="margin-top:14px">
