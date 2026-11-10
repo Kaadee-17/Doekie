@@ -355,10 +355,11 @@
   // ---------- Filmpagina ----------
   async function viewFilm(id, type) {
     id = Number(id);
-    const [m, wl, friends] = await Promise.all([
+    const [m, wl, friends, myLogs] = await Promise.all([
       tmdb(`${type}/${id}`, { append_to_response: "videos,credits,watch/providers", include_video_language: "nl,en" }),
       sb.from("watchlist").select("tmdb_id").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).maybeSingle(),
-      followingIds().then((ids) => sb.from("logs").select("*, profiles(username, display_name)").eq("media_type", type).eq("tmdb_id", id).in("user_id", [S.me.id, ...ids]).order("created_at", { ascending: false }).limit(20))
+      followingIds().then((ids) => sb.from("logs").select("*, profiles(username, display_name)").eq("media_type", type).eq("tmdb_id", id).in("user_id", [S.me.id, ...ids]).order("created_at", { ascending: false }).limit(20)),
+      sb.from("logs").select("id").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).limit(1)
     ]);
     m.media_type = type;
     S.film = m;
@@ -389,6 +390,7 @@
     const avg = rated.length ? (rated.reduce((s, l) => s + Number(l.rating), 0) / rated.length).toFixed(1).replace(".", ",") : null;
     S.filmTrailer = trailer?.key || null;
     S.filmInList = !!wl.data;
+    S.filmSeen = !!myLogs.data?.length;
     return `
       <div class="hero" style="background-image:${m.backdrop_path ? `url('${IMG}w780${esc(m.backdrop_path)}')` : "none"}">
         <button class="back" data-act="back" aria-label="Terug">${icon.back}</button>
@@ -402,8 +404,9 @@
           <span class="muted" style="font-size:13px">${lengthText}${esc((m.genres || []).slice(0, 2).map((g) => g.name).join(", "))}</span>
         </div>
       </div>
-      <div class="row" style="margin-top:18px">
-        <button class="btn pink" style="flex:1" data-act="log">+ Loggen</button>
+      <div class="row film-actions" style="margin-top:18px">
+        <button class="btn pink" style="flex:1" data-act="seen" aria-pressed="${S.filmSeen}">${S.filmSeen ? "✓ Gezien" : "○ Gezien"}</button>
+        <button class="btn" style="flex:1" data-act="log">+ Recensie</button>
         <button class="btn" style="flex:1" data-act="watchlist" aria-pressed="${S.filmInList}">${S.filmInList ? "✓ Op kijklijst" : "+ Kijklijst"}</button>
       </div>
       ${m.overview ? `<p class="overview">${esc(m.overview)}</p>` : ""}
@@ -529,6 +532,28 @@
     toast(S.filmInList ? "Op je kijklijst gezet" : "Van je kijklijst gehaald");
   }
 
+  async function markSeen(btn) {
+    const m = S.film;
+    if (!m) return;
+    btn.disabled = true;
+    const { data, error } = await sb.from("logs").select("id").eq("user_id", S.me.id).eq("media_type", m.media_type).eq("tmdb_id", m.id).limit(1);
+    if (error) { btn.disabled = false; return fail(error, "Bekeken status laden lukte niet."); }
+    if (data?.length) {
+      btn.disabled = false;
+      S.filmSeen = true;
+      btn.setAttribute("aria-pressed", "true");
+      btn.textContent = "✓ Gezien";
+      return toast("Deze titel staat al als gezien");
+    }
+    const { error: insertError } = await sb.from("logs").insert({ user_id: S.me.id, media_type: m.media_type, tmdb_id: m.id, title: titleOf(m), year: Number(yearOf(dateOf(m))) || null, poster_path: m.poster_path, watched_on: today(), rating: null, liked: false, rewatch: false, review: null, service: null });
+    btn.disabled = false;
+    if (insertError) return fail(insertError, "Markeren als gezien lukte niet.");
+    S.filmSeen = true;
+    btn.setAttribute("aria-pressed", "true");
+    btn.textContent = "✓ Gezien";
+    toast("Als gezien opgeslagen");
+  }
+
   // ---------- Profiel ----------
   async function viewProfile(username) {
     const { data: p } = await sb.from("profiles").select("*").eq("username", username).maybeSingle();
@@ -542,7 +567,7 @@
       isMe ? sb.from("watchlist").select("*").eq("user_id", p.id).order("created_at", { ascending: false }) : Promise.resolve({ data: [] })
     ]);
     const L = logs.data || [];
-    S.profile = { p, isMe, logs: L, watchlist: wl.data || [], tab: S.profile?.p?.id === p.id ? S.profile.tab : "dagboek", following: !!amFollowing.data };
+    S.profile = { p, isMe, logs: L, watchlist: wl.data || [], tab: S.profile?.p?.id === p.id ? S.profile.tab : "dagboek", following: !!amFollowing.data, seenQuery: "" };
     const yr = String(new Date().getFullYear());
     return `
       <div class="row" style="justify-content:flex-end;min-height:44px">${isMe ? `<a class="x" href="#instellingen" aria-label="Instellingen">${icon.gear}</a>` : ""}</div>
@@ -555,12 +580,20 @@
         <div><b>${following.count ?? 0}</b><span>volgend</span></div>
       </div>
       <div class="seg" role="tablist">
-        ${[["dagboek", "Dagboek"], ["kijklijst", "Kijklijst"], ["stats", "Statistiek"]].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
+        ${[["dagboek", "Dagboek"], ...(isMe ? [["gezien", "Gekeken films"]] : []), ["kijklijst", "Kijklijst"], ["stats", "Statistiek"]].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
       </div>
       <div id="ptab-body" style="margin-top:12px">${profileTab()}</div>`;
   }
   function profileTab() {
     const P = S.profile;
+    if (P.tab === "gezien") {
+      const unique = new Map();
+      for (const l of P.logs) if (!unique.has(`${l.media_type}:${l.tmdb_id}`)) unique.set(`${l.media_type}:${l.tmdb_id}`, l);
+      const q = (P.seenQuery || "").trim().toLocaleLowerCase("nl");
+      const watched = [...unique.values()].filter((l) => !q || (l.title || "").toLocaleLowerCase("nl").includes(q)).sort((a, b) => (a.title || "").localeCompare(b.title || "", "nl"));
+      const tiles = watched.map((l) => `<a class="tile" href="${linkTo(typeOf(l), l.tmdb_id)}">${poster(l.poster_path)}<span class="t">${esc(l.title)}</span><span class="y">${typeOf(l) === "tv" ? "Serie" : "Film"}${l.year ? ` · ${l.year}` : ""}</span></a>`).join("");
+      return `<div class="stack" style="gap:12px"><input class="input" id="zoek-gezien" type="search" placeholder="Zoek een film of serie" aria-label="Zoek in je bekeken films en series" value="${esc(P.seenQuery)}"><div id="gezien-results">${tiles ? `<div class="grid">${tiles}</div>` : `<div class="empty"><p class="muted" style="margin:0">${q ? "Geen bekeken films of series gevonden." : "Je hebt nog geen films of series als gezien gemarkeerd."}</p></div>`}</div></div>`;
+    }
     if (P.tab === "kijklijst") {
       return P.watchlist.length ? `<div class="grid">${P.watchlist.map((w) => `<a class="tile" href="${linkTo(typeOf(w), w.tmdb_id)}">${poster(w.poster_path)}<span class="t">${esc(w.title)}</span>${typeOf(w) === "tv" ? '<span class="y">Serie</span>' : ""}</a>`).join("")}</div>`
         : `<div class="empty"><p class="muted" style="margin:0">Je kijklijst is leeg. Tik bij een film of serie op “+ Kijklijst”.</p></div>`;
@@ -672,6 +705,7 @@
       }
       case "episode": { const d = el.querySelector(".ep-more"); if (d) { d.hidden = !d.hidden; el.setAttribute("aria-expanded", !d.hidden); } break; }
       case "log": openLog(); break;
+      case "seen": markSeen(el); break;
       case "watchlist": toggleWatchlist(el); break;
       case "close": case "sheet-bg": closeSheet(); break;
       case "star": { const n = Number(el.dataset.n); S.log.rating = S.log.rating === n ? n - 0.5 : n; renderLogSheet(); break; }
@@ -679,7 +713,7 @@
       case "toggle-rewatch": S.log.rewatch = !S.log.rewatch; renderLogSheet(); break;
       case "service": S.log.service = el.dataset.s; renderLogSheet(); break;
       case "save-log": saveLog(el); break;
-      case "ptab": S.profile.tab = el.dataset.t; document.querySelectorAll("[data-act=ptab]").forEach((b) => b.setAttribute("aria-selected", b === el)); document.getElementById("ptab-body").innerHTML = profileTab(); break;
+      case "ptab": S.profile.tab = el.dataset.t; S.profile.seenQuery = ""; document.querySelectorAll("[data-act=ptab]").forEach((b) => b.setAttribute("aria-selected", b === el)); document.getElementById("ptab-body").innerHTML = profileTab(); break;
       case "follow": toggleFollow(el); break;
       case "share": share(); break;
       case "logout": await sb.auth.signOut(); location.hash = ""; break;
@@ -688,6 +722,13 @@
   document.addEventListener("input", (e) => {
     if (e.target.id === "zoek") { clearTimeout(S.searchT); S.searchT = setTimeout(runSearch, 300); }
     if (e.target.id === "zoek-vriend") { clearTimeout(S.searchT); S.searchT = setTimeout(searchFriends, 250); }
+    if (e.target.id === "zoek-gezien") {
+      S.profile.seenQuery = e.target.value;
+      const body = document.getElementById("ptab-body");
+      if (body) body.innerHTML = profileTab();
+      const input = document.getElementById("zoek-gezien");
+      if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+    }
   });
   document.addEventListener("change", (e) => { if (e.target.matches("[data-prov]")) saveServices(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && sheetRoot.innerHTML) closeSheet(); });
