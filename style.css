@@ -106,6 +106,8 @@ button.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); bor
 .film-head .p { width: 112px; flex: none; }
 .film-head .p img { border: 1px solid rgba(255,255,255,0.12); }
 .overview { color: var(--soft); margin: 14px 0 0; }
+.film-actions { gap: 8px; }
+.film-actions .btn { min-width: 0; padding: 0 8px; font-size: 13px; }
 .provider { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); }
 .provider.mine { border-color: var(--pink); }
 .provider img { width: 40px; height: 40px; border-radius: 10px; }
@@ -118,8 +120,8 @@ button.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); bor
 .counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 16px; text-align: center; }
 .counts b { display: block; font-size: 20px; font-weight: 800; }
 .counts span { font-size: 12px; color: var(--muted); }
-.seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: var(--surface); margin-top: 18px; }
-.seg button { height: 38px; border: 0; border-radius: 10px; background: transparent; color: var(--soft); font-weight: 600; }
+.seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: var(--surface); margin-top: 18px; }
+.seg button { height: 38px; border: 0; border-radius: 10px; background: transparent; color: var(--soft); font-size: 12px; font-weight: 600; padding: 0 3px; }
 .seg button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
 .diary-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .diary-row .d { width: 38px; text-align: center; font-size: 12px; color: var(--muted); }
