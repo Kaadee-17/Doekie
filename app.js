@@ -22,7 +22,7 @@
 
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
   const FN = cfg.supabaseUrl.replace(/\/$/, "") + "/functions/v1/tmdb";
-  const S = { session: null, me: null, providers: null, cache: new Map(), routeId: 0, ontdekMine: false, searchQuery: "", searchT: null, log: null, authMode: inviteParam() ? "signup" : "login", authError: urlError ? "Inloggen lukte niet: " + urlError : null };
+  const S = { session: null, me: null, providers: null, cache: new Map(), routeId: 0, ontdekMine: false, searchQuery: "", discoverFilters: { type: "all", genre: "", year: "", sort: "popularity.desc" }, searchT: null, log: null, authMode: inviteParam() ? "signup" : "login", authError: urlError ? "Inloggen lukte niet: " + urlError : null };
   function inviteParam() { return new URLSearchParams(location.search).get("uitnodiging"); }
 
   // ---------- Hulpjes ----------
@@ -262,12 +262,26 @@
   // ---------- Ontdekken ----------
   async function viewOntdek() {
     const hasMine = myServices().length > 0;
+    const [movieGenres, tvGenres] = await Promise.all([
+      tmdb("genre/movie/list", { language: "nl-NL" }).catch(() => ({ genres: [] })),
+      tmdb("genre/tv/list", { language: "nl-NL" }).catch(() => ({ genres: [] }))
+    ]);
+    const genres = [...new Map([...(movieGenres.genres || []), ...(tvGenres.genres || [])].map((g) => [g.id, g])).values()].sort((a, b) => a.name.localeCompare(b.name, "nl"));
+    const F = S.discoverFilters;
     return `<h1 class="h1">Ontdek</h1>
       <div class="stack" style="margin-top:14px">
         <input class="input" id="zoek" type="search" placeholder="Zoek een film of serie" aria-label="Zoek een film of serie" autocomplete="off" value="${esc(S.searchQuery)}">
         <div class="chips">
           <button class="chip" data-act="ontdek-all" aria-pressed="${!S.ontdekMine}">Populair</button>
           ${hasMine ? `<button class="chip" data-act="ontdek-mine" aria-pressed="${S.ontdekMine}">Op mijn diensten</button>` : `<a class="chip" href="#instellingen">Kies je diensten</a>`}
+        </div>
+        <div class="stack" style="gap:8px"><span class="label">Filters</span>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
+            <label class="stack" style="gap:4px"><span class="muted" style="font-size:12px">Type</span><select class="input" id="filter-type"><option value="all" ${F.type === "all" ? "selected" : ""}>Alles</option><option value="movie" ${F.type === "movie" ? "selected" : ""}>Films</option><option value="tv" ${F.type === "tv" ? "selected" : ""}>Series</option></select></label>
+            <label class="stack" style="gap:4px"><span class="muted" style="font-size:12px">Genre</span><select class="input" id="filter-genre"><option value="">Alle genres</option>${genres.map((g) => `<option value="${g.id}" ${String(F.genre) === String(g.id) ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></label>
+            <label class="stack" style="gap:4px"><span class="muted" style="font-size:12px">Jaar</span><input class="input" id="filter-year" type="number" min="1900" max="${new Date().getFullYear() + 5}" placeholder="Alle jaren" value="${esc(F.year)}"></label>
+            <label class="stack" style="gap:4px"><span class="muted" style="font-size:12px">Sorteren op</span><select class="input" id="filter-sort"><option value="popularity.desc" ${F.sort === "popularity.desc" ? "selected" : ""}>Populariteit</option><option value="vote_average.desc" ${F.sort === "vote_average.desc" ? "selected" : ""}>Hoogste beoordeling</option><option value="newest" ${F.sort === "newest" ? "selected" : ""}>Nieuwste eerst</option></select></label>
+          </div>
         </div>
       </div>
       <div id="people-results"></div>
@@ -335,8 +349,21 @@
     const title = document.getElementById("results-title");
     const q = (document.getElementById("zoek")?.value || "").trim();
     let list, label, people = [];
+    const F = S.discoverFilters;
+    const hasFilters = F.type !== "all" || !!F.genre || !!F.year || F.sort !== "popularity.desc";
     try {
       if (q) { const r = await smartSearch(q); list = r.titles; people = r.people; label = `Resultaten voor “${q}”`; }
+      else if (hasFilters) {
+        const types = F.type === "all" ? ["movie", "tv"] : [F.type];
+        const pages = await Promise.all(types.map((type) => {
+          const p = { sort_by: F.sort === "newest" ? (type === "movie" ? "primary_release_date.desc" : "first_air_date.desc") : F.sort, include_adult: "false" };
+          if (F.genre) p.with_genres = F.genre;
+          if (F.year) p[type === "movie" ? "year" : "first_air_date_year"] = F.year;
+          return tmdb(`discover/${type}`, p).then((r) => (r.results || []).map((m) => ({ ...m, media_type: type })));
+        }));
+        list = pages.flat().sort((a, b) => F.sort === "vote_average.desc" ? (b.vote_average || 0) - (a.vote_average || 0) : F.sort === "newest" ? dateOf(b).localeCompare(dateOf(a)) : (b.popularity || 0) - (a.popularity || 0));
+        label = "Gefilterde titels";
+      }
       else if (S.ontdekMine && myServices().length) {
         const p = { watch_region: "NL", with_watch_providers: myServices().join("|"), with_watch_monetization_types: "flatrate", sort_by: "popularity.desc" };
         const [mv, tv] = await Promise.all([tmdb("discover/movie", p), tmdb("discover/tv", p).catch(() => ({ results: [] }))]);
@@ -345,6 +372,12 @@
       } else { list = onlyTitles((await tmdb("trending/all/week")).results); label = "Populair deze week"; }
     } catch (e) { box.innerHTML = `<p class="muted">Laden lukte niet. Probeer het opnieuw.</p>`; return; }
     if (q !== (document.getElementById("zoek")?.value || "").trim()) return;
+    if (q && hasFilters) {
+      list = list.filter((m) => (F.type === "all" || typeOf(m) === F.type)
+        && (!F.genre || (m.genre_ids || []).includes(Number(F.genre)))
+        && (!F.year || dateOf(m).startsWith(F.year)));
+      list.sort((a, b) => F.sort === "vote_average.desc" ? (b.vote_average || 0) - (a.vote_average || 0) : F.sort === "newest" ? dateOf(b).localeCompare(dateOf(a)) : (b.popularity || 0) - (a.popularity || 0));
+    }
     renderPeople(people);
     title.textContent = label;
     box.innerHTML = list.length
@@ -614,7 +647,9 @@
     const { error } = await sb.from("logs").insert(row);
     if (error) { btn.disabled = false; return fail(error, "Opslaan lukte niet."); }
     await sb.from("watchlist").delete().eq("user_id", S.me.id).eq("media_type", m.media_type).eq("tmdb_id", m.id);
-    closeSheet(); toast("Opgeslagen in je dagboek");
+    closeSheet();
+    const hasReview = !!row.review;
+    toast(hasReview && L.liked ? "Review opgeslagen en favoriet toegevoegd" : hasReview ? "Review opgeslagen in je dagboek" : L.liked ? "Als favoriet opgeslagen" : "Opgeslagen in je dagboek");
     location.hash = "feed";
   }
   async function toggleWatchlist(btn) {
@@ -903,7 +938,16 @@
       if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
     }
   });
-  document.addEventListener("change", (e) => { if (e.target.matches("[data-prov]")) saveServices(); });
+  document.addEventListener("change", (e) => {
+    if (e.target.matches("[data-prov]")) saveServices();
+    if (["filter-type", "filter-genre", "filter-year", "filter-sort"].includes(e.target.id)) {
+      S.discoverFilters.type = document.getElementById("filter-type")?.value || "all";
+      S.discoverFilters.genre = document.getElementById("filter-genre")?.value || "";
+      S.discoverFilters.year = document.getElementById("filter-year")?.value || "";
+      S.discoverFilters.sort = document.getElementById("filter-sort")?.value || "popularity.desc";
+      clearTimeout(S.searchT); S.searchT = setTimeout(runSearch, 80);
+    }
+  });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && sheetRoot.innerHTML) closeSheet(); });
   document.addEventListener("submit", async (e) => {
     e.preventDefault();
