@@ -22,7 +22,7 @@
 
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
   const FN = cfg.supabaseUrl.replace(/\/$/, "") + "/functions/v1/tmdb";
-  const S = { session: null, me: null, providers: null, cache: new Map(), routeId: 0, ontdekMine: false, searchT: null, log: null, authMode: inviteParam() ? "signup" : "login", authError: urlError ? "Inloggen lukte niet: " + urlError : null };
+  const S = { session: null, me: null, providers: null, cache: new Map(), routeId: 0, ontdekMine: false, searchQuery: "", searchT: null, log: null, authMode: inviteParam() ? "signup" : "login", authError: urlError ? "Inloggen lukte niet: " + urlError : null };
   function inviteParam() { return new URLSearchParams(location.search).get("uitnodiging"); }
 
   // ---------- Hulpjes ----------
@@ -264,7 +264,7 @@
     const hasMine = myServices().length > 0;
     return `<h1 class="h1">Ontdek</h1>
       <div class="stack" style="margin-top:14px">
-        <input class="input" id="zoek" type="search" placeholder="Zoek een film of serie" aria-label="Zoek een film of serie" autocomplete="off">
+        <input class="input" id="zoek" type="search" placeholder="Zoek een film of serie" aria-label="Zoek een film of serie" autocomplete="off" value="${esc(S.searchQuery)}">
         <div class="chips">
           <button class="chip" data-act="ontdek-all" aria-pressed="${!S.ontdekMine}">Populair</button>
           ${hasMine ? `<button class="chip" data-act="ontdek-mine" aria-pressed="${S.ontdekMine}">Op mijn diensten</button>` : `<a class="chip" href="#instellingen">Kies je diensten</a>`}
@@ -355,12 +355,13 @@
   // ---------- Filmpagina ----------
   async function viewFilm(id, type) {
     id = Number(id);
-    const [m, wl, friends, myLogs, episodeProgress] = await Promise.all([
+    const [m, wl, friends, myLogs, episodeProgress, related] = await Promise.all([
       tmdb(`${type}/${id}`, { append_to_response: "videos,credits,watch/providers", include_video_language: "nl,en" }),
       sb.from("watchlist").select("tmdb_id").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).maybeSingle(),
       followingIds().then((ids) => sb.from("logs").select("*, profiles(username, display_name)").eq("media_type", type).eq("tmdb_id", id).in("user_id", [S.me.id, ...ids]).order("created_at", { ascending: false }).limit(20)),
       sb.from("logs").select("*").eq("user_id", S.me.id).eq("media_type", type).eq("tmdb_id", id).order("watched_on", { ascending: false }).order("created_at", { ascending: false }).limit(1),
-      type === "tv" ? sb.from("episode_progress").select("season_number, episode_number, watched_at").eq("user_id", S.me.id).eq("tmdb_id", id) : Promise.resolve({ data: [], error: null })
+      type === "tv" ? sb.from("episode_progress").select("season_number, episode_number, watched_at").eq("user_id", S.me.id).eq("tmdb_id", id) : Promise.resolve({ data: [], error: null }),
+      tmdb(`${type}/${id}/recommendations`).catch(() => ({ results: [] }))
     ]);
     m.media_type = type;
     S.film = m;
@@ -389,6 +390,8 @@
     const fl = friends.data || [];
     const rated = fl.filter((l) => l.rating);
     const avg = rated.length ? (rated.reduce((s, l) => s + Number(l.rating), 0) / rated.length).toFixed(1).replace(".", ",") : null;
+    const relatedItems = (related.results || []).filter((item) => item.poster_path).slice(0, 9).map((item) => ({ ...item, media_type: type }));
+    const relatedSection = relatedItems.length ? `<div class="section"><div class="section-head"><h2 class="h2">Meer zoals deze ${what}</h2></div><div class="grid">${relatedItems.map((item) => `<a class="tile" href="${linkTo(type, item.id)}">${poster(item.poster_path)}<span class="t">${esc(titleOf(item))}</span><span class="y">${yearOf(dateOf(item))}</span></a>`).join("")}</div></div>` : "";
     S.filmTrailer = trailer?.key || null;
     S.filmInList = !!wl.data;
     S.filmSeen = !!myLogs.data?.length;
@@ -416,6 +419,7 @@
         <button class="btn" style="flex:1" data-act="watchlist" aria-pressed="${S.filmInList}">${S.filmInList ? "✓ Op kijklijst" : "+ Kijklijst"}</button>
       </div>
       ${m.overview ? `<p class="overview">${esc(m.overview)}</p>` : ""}
+      ${relatedSection}
       ${isTv ? seasonsSection(m) : ""}
       <div class="section">
         <div class="section-head"><h2 class="h2">Waar te zien in Nederland</h2><span class="source">Bron: JustWatch</span></div>
@@ -897,7 +901,7 @@
     }
   });
   document.addEventListener("input", (e) => {
-    if (e.target.id === "zoek") { clearTimeout(S.searchT); S.searchT = setTimeout(runSearch, 300); }
+    if (e.target.id === "zoek") { S.searchQuery = e.target.value; clearTimeout(S.searchT); S.searchT = setTimeout(runSearch, 300); }
     if (e.target.id === "zoek-vriend") { clearTimeout(S.searchT); S.searchT = setTimeout(searchFriends, 250); }
     if (e.target.id === "zoek-gezien") {
       S.profile.seenQuery = e.target.value;
