@@ -431,7 +431,18 @@
     const fl = friends.data || [];
     const rated = fl.filter((l) => l.rating);
     const avg = rated.length ? (rated.reduce((s, l) => s + Number(l.rating), 0) / rated.length).toFixed(1).replace(".", ",") : null;
-    const relatedItems = [...(recommendations.results || []), ...(similar.results || [])]
+    let relatedCandidates = [...(recommendations.results || []), ...(similar.results || [])];
+    if (!relatedCandidates.some((item) => item.poster_path && item.id !== id)) {
+      const relatedParams = { sort_by: "popularity.desc", include_adult: "false" };
+      if (m.genres?.length) relatedParams.with_genres = m.genres.map((genre) => genre.id).join("|");
+      const fallback = await tmdb(`discover/${type}`, relatedParams).catch(() => ({ results: [] }));
+      relatedCandidates = fallback.results || [];
+      if (!relatedCandidates.some((item) => item.poster_path && item.id !== id)) {
+        const trending = await tmdb("trending/all/week").catch(() => ({ results: [] }));
+        relatedCandidates = onlyTitles(trending.results).filter((item) => typeOf(item) === type);
+      }
+    }
+    const relatedItems = relatedCandidates
       .filter((item, index, all) => item.poster_path && item.id !== id && all.findIndex((candidate) => candidate.id === item.id) === index)
       .slice(0, 9)
       .map((item) => ({ ...item, media_type: type }));
