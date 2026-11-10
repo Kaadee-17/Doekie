@@ -630,14 +630,27 @@
     const m = S.film;
     if (!m) return;
     btn.disabled = true;
-    const { data, error } = await sb.from("logs").select("id").eq("user_id", S.me.id).eq("media_type", m.media_type).eq("tmdb_id", m.id).limit(1);
+    const { data, error } = await sb.from("logs").select("*").eq("user_id", S.me.id).eq("media_type", m.media_type).eq("tmdb_id", m.id).order("watched_on", { ascending: false }).order("created_at", { ascending: false });
     if (error) { btn.disabled = false; return fail(error, "Bekeken status laden lukte niet."); }
     if (data?.length) {
+      const marker = data.find((l) => !l.review && !l.rating && !l.liked && !l.rewatch && !l.service);
+      if (!marker) {
+        btn.disabled = false;
+        S.filmSeen = true;
+        btn.setAttribute("aria-pressed", "true");
+        btn.textContent = "✓ Gezien";
+        return toast("Deze titel heeft een review of favoriet. Die is bewaard.");
+      }
+      const { error: deleteError } = await sb.from("logs").delete().eq("id", marker.id).eq("user_id", S.me.id);
       btn.disabled = false;
-      S.filmSeen = true;
-      btn.setAttribute("aria-pressed", "true");
-      btn.textContent = "✓ Gezien";
-      return toast("Deze titel staat al als gezien");
+      if (deleteError) return fail(deleteError, "Gezien-markering verwijderen lukte niet.");
+      const remaining = data.filter((l) => l.id !== marker.id);
+      S.filmSeen = remaining.length > 0;
+      S.filmLog = remaining[0] || null;
+      S.filmLiked = !!S.filmLog?.liked;
+      btn.setAttribute("aria-pressed", String(S.filmSeen));
+      btn.textContent = S.filmSeen ? "✓ Gezien" : "○ Gezien";
+      return toast(S.filmSeen ? "Lege kijkmarkering verwijderd; er staat nog een logboekvermelding." : "Van Gekeken verwijderd");
     }
     const { data: newLog, error: insertError } = await sb.from("logs").insert({ user_id: S.me.id, media_type: m.media_type, tmdb_id: m.id, title: titleOf(m), year: Number(yearOf(dateOf(m))) || null, poster_path: m.poster_path, watched_on: today(), rating: null, liked: false, rewatch: false, review: null, service: null }).select().single();
     btn.disabled = false;
