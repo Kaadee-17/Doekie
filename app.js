@@ -16,9 +16,14 @@
     return;
   }
 
+  // Een foutmelding van Google of Supabase in het adres bewaren, voordat we het adres opschonen.
+  const urlParams = new URLSearchParams(location.hash.slice(1) + "&" + location.search.slice(1));
+  const urlError = urlParams.get("error_description");
+
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
   const FN = cfg.supabaseUrl.replace(/\/$/, "") + "/functions/v1/tmdb";
-  const S = { session: null, me: null, providers: null, cache: new Map(), routeId: 0, ontdekMine: false, searchT: null, log: null };
+  const S = { session: null, me: null, providers: null, cache: new Map(), routeId: 0, ontdekMine: false, searchT: null, log: null, authMode: inviteParam() ? "signup" : "login", authError: urlError ? "Inloggen lukte niet: " + urlError : null };
+  function inviteParam() { return new URLSearchParams(location.search).get("uitnodiging"); }
 
   // ---------- Hulpjes ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -49,6 +54,7 @@
     back: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
     x: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
     play: '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12-7.5z" fill="#08090C"/></svg>',
+    google: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.3z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.5l-3.2-2.5c-.9.6-2 .9-3.4.9-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22z"/><path fill="#FBBC05" d="M6.4 13.8a6 6 0 0 1 0-3.6V7.6H3.1a10 10 0 0 0 0 8.8z"/><path fill="#EA4335" d="M12 6c1.5 0 2.8.5 3.8 1.5l2.8-2.8A10 10 0 0 0 3.1 7.6l3.3 2.6C7.2 7.8 9.4 6 12 6z"/></svg>',
     gear: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>'
   };
   function toast(msg) {
@@ -116,6 +122,7 @@
     let posters = [];
     try { posters = (await tmdb("trending/movie/week")).results.filter((m) => m.poster_path).slice(0, 8); } catch (_) {}
     const col = (list) => `<div class="wall-col">${list.map((m) => poster(m.poster_path)).join("")}</div>`;
+    const signup = S.authMode === "signup";
     app.innerHTML = `
       <div class="login">
         <div class="wall">
@@ -127,27 +134,31 @@
           <p class="soft" style="margin:0;font-size:17px">Zie wat je vrienden kijken.<br>Weet meteen waar het staat.</p>
         </div>
         <form class="login-form" id="login-form">
+          <div class="seg" role="tablist" aria-label="Inloggen of account maken" style="grid-template-columns:repeat(2,minmax(0,1fr));margin:0 0 6px">
+            <button type="button" role="tab" data-act="auth-mode" data-m="login" aria-selected="${!signup}">Inloggen</button>
+            <button type="button" role="tab" data-act="auth-mode" data-m="signup" aria-selected="${signup}">Account maken</button>
+          </div>
           <label class="label" for="email">E-mailadres</label>
-          <input class="input" id="email" type="email" autocomplete="email" placeholder="jij@voorbeeld.nl" required>
-          <button class="btn primary block" id="login-btn" type="submit">Stuur mij een code</button>
-          <p class="muted" style="margin:2px 0 0;text-align:center;font-size:12px">Gratis · Geen wachtwoord nodig</p>
+          <input class="input" id="email" type="email" autocomplete="email" placeholder="jij@voorbeeld.nl" value="${esc(S.lastEmail || "")}" required>
+          <label class="label" for="password">Wachtwoord</label>
+          <input class="input" id="password" type="password" autocomplete="${signup ? "new-password" : "current-password"}" minlength="8" placeholder="${signup ? "Minstens 8 tekens" : "Je wachtwoord"}" required>
+          <button class="btn primary block" id="login-btn" type="submit">${signup ? "Account maken" : "Inloggen"}</button>
+          ${cfg.google ? `<button class="btn block" type="button" data-act="google">${icon.google} Doorgaan met Google</button>` : ""}
+          <p class="muted" style="margin:2px 0 0;text-align:center;font-size:12px">Gratis · Je ziet meteen wat je vrienden kijken</p>
         </form>
       </div>`;
+    if (S.authError) { toast(S.authError); S.authError = null; }
   }
 
-  function viewCode(email) {
-    app.innerHTML = `
-      <div class="center">
-        <div class="logo" style="font-size:48px">doekie<span>.</span></div>
-        <h1 class="h2">Check je mail</h1>
-        <p class="muted">We stuurden een code naar <b>${esc(email)}</b>. Vul hem hier in, of tik op de link in de mail.</p>
-        <form id="code-form" class="stack" style="width:100%;max-width:340px">
-          <input class="input" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Code uit de mail" required style="text-align:center;font-size:22px;letter-spacing:6px">
-          <button class="btn primary block" type="submit">Inloggen</button>
-          <button class="btn ghost block" type="button" data-act="login-back">Ander e-mailadres</button>
-        </form>
-      </div>`;
-    S.pendingEmail = email;
+  function authMessage(err) {
+    const code = err?.code || "", msg = (err?.message || "").toLowerCase();
+    if (err?.status === 429 || code.includes("rate_limit")) return "Even te veel pogingen. Probeer het over een paar minuten.";
+    if (code === "invalid_credentials" || msg.includes("invalid login")) return "E-mailadres of wachtwoord klopt niet.";
+    if (code === "user_already_exists" || msg.includes("already registered")) return "Dit e-mailadres heeft al een account. Kies Inloggen.";
+    if (code === "weak_password" || msg.includes("password should")) return "Kies een langer of sterker wachtwoord.";
+    if (code === "email_not_confirmed" || msg.includes("not confirmed")) return "Je e-mailadres is nog niet bevestigd.";
+    if (msg.includes("provider is not enabled")) return "Inloggen met Google is nog niet ingesteld.";
+    return "Dat lukte niet. Probeer het opnieuw.";
   }
 
   function viewOnboarding() {
@@ -519,7 +530,12 @@
     if (act === "sheet-bg" && e.target !== el) return;
     switch (act) {
       case "retry": route(); break;
-      case "login-back": viewLogin(); break;
+      case "auth-mode": S.authMode = el.dataset.m; viewLogin(); break;
+      case "google": {
+        const { error } = await sb.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin + location.pathname } });
+        if (error) fail(error, authMessage(error));
+        break;
+      }
       case "focus-search": S.focusSearch = true; if (location.hash === "#ontdek") { e.preventDefault(); document.getElementById("zoek")?.focus(); } break;
       case "back": history.length > 1 ? history.back() : (location.hash = "feed"); break;
       case "ontdek-all": S.ontdekMine = false; route(); break;
@@ -550,15 +566,21 @@
     const f = e.target;
     if (f.id === "login-form") {
       const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+      const signup = S.authMode === "signup";
+      S.lastEmail = email;
+      if (password.length < 8) return toast("Je wachtwoord moet minstens 8 tekens zijn.");
       const btn = document.getElementById("login-btn"); btn.disabled = true; btn.textContent = "Bezig…";
-      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-      if (error) { btn.disabled = false; btn.textContent = "Stuur mij een code"; return fail(error, error.status === 429 ? "Even te veel pogingen. Probeer het over een paar minuten." : "Versturen lukte niet. Klopt je e-mailadres?"); }
-      viewCode(email);
-    }
-    if (f.id === "code-form") {
-      const token = document.getElementById("code").value.replace(/\s/g, "");
-      const { error } = await sb.auth.verifyOtp({ email: S.pendingEmail, token, type: "email" });
-      if (error) return fail(error, "Die code klopt niet of is verlopen.");
+      const res = signup
+        ? await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } })
+        : await sb.auth.signInWithPassword({ email, password });
+      if (res.error) { btn.disabled = false; btn.textContent = signup ? "Account maken" : "Inloggen"; return fail(res.error, authMessage(res.error)); }
+      if (signup && !res.data.session) {
+        btn.disabled = false; btn.textContent = "Account maken";
+        app.innerHTML = `<div class="center"><div class="logo" style="font-size:48px">doekie<span>.</span></div><h1 class="h2">Bevestig je e-mailadres</h1>
+          <p class="muted">We stuurden een mail naar <b>${esc(email)}</b>. Tik op de link en log daarna in.</p>
+          <button class="btn" data-act="auth-mode" data-m="login">Naar inloggen</button></div>`;
+      }
     }
     if (f.id === "onboard-form") {
       const username = document.getElementById("username").value.trim().toLowerCase();
