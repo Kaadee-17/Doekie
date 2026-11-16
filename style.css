@@ -99,6 +99,15 @@ button.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); bor
 .review { margin: 0; font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
 .avatar { width: 34px; height: 34px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: #FFFFFF; }
 .avatar.big { width: 72px; height: 72px; font-family: var(--display); font-size: 30px; font-weight: 800; }
+.feed-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.feed-action { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid transparent; border-radius: 12px; background: transparent; color: var(--soft); font-size: 13px; font-weight: 600; }
+.feed-action[aria-pressed="true"] { color: var(--green-light); background: var(--green-soft); }
+.feed-comment-list { display: flex; flex-direction: column; gap: 7px; }
+.feed-comment { padding: 8px 10px; border-radius: 12px; background: var(--surface-2); font-size: 13px; color: var(--soft); overflow-wrap: anywhere; }
+.feed-comment b { color: var(--ink); margin-right: 4px; }
+.feed-comment-form { display: flex; gap: 8px; margin-top: 8px; }
+.feed-comment-form .input { min-width: 0; height: 40px; flex: 1; padding: 0 12px; font-size: 14px; }
+.feed-comment-form .btn { flex: none; }
 
 /* Filmpagina */
 .hero { position: relative; margin: calc(-1 * var(--safe-top) - 16px) -16px 0; height: 300px; background: var(--surface-2) center / cover no-repeat; }
@@ -140,6 +149,10 @@ button.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); bor
 .seg button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
 .profile-tabs { width: 100%; }
 .profile-tabs button { min-width: 0; white-space: nowrap; font-size: clamp(12px, 3.4vw, 14px); padding: 0 4px; }
+.stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.stat-card { min-width: 0; min-height: 84px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.stat-card .muted { font-size: 12px; }
+.stat-card b { font-family: var(--display); font-size: 21px; line-height: 1.1; overflow-wrap: anywhere; }
 .diary-row { display: grid; grid-template-columns: 38px 42px minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; column-gap: 10px; row-gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .diary-row .d { width: 38px; text-align: center; font-size: 12px; color: var(--muted); }
 .diary-row .d b { display: block; font-size: 18px; color: var(--ink); line-height: 1; }
