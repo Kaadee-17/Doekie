@@ -22,7 +22,7 @@
 
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
   const FN = cfg.supabaseUrl.replace(/\/$/, "") + "/functions/v1/tmdb";
-  const S = { session: null, me: null, providers: null, cache: new Map(), routeId: 0, ontdekMine: false, searchQuery: "", discoverFilters: { type: "all", genre: "", year: "", sort: "popularity.desc" }, searchT: null, log: null, authMode: inviteParam() ? "signup" : "login", authError: urlError ? "Inloggen lukte niet: " + urlError : null };
+  const S = { session: null, me: null, providers: null, cache: new Map(), routeId: 0, ontdekMine: false, searchQuery: "", discoverFilters: { type: "all", genre: "", year: "", sort: "popularity.desc" }, feedLikes: new Set(), feedWatchlist: new Set(), feedComments: new Map(), searchT: null, log: null, authMode: inviteParam() ? "signup" : "login", authError: urlError ? "Inloggen lukte niet: " + urlError : null };
   function inviteParam() { return new URLSearchParams(location.search).get("uitnodiging"); }
 
   // ---------- Hulpjes ----------
@@ -234,6 +234,10 @@
   }
   function logCard(l) {
     const p = l.profiles || {};
+    const comments = S.feedComments.get(String(l.id)) || [];
+    const mediaKey = `${l.media_type}:${l.tmdb_id}`;
+    const liked = S.feedLikes.has(String(l.id));
+    const inWatchlist = S.feedWatchlist.has(mediaKey);
     return `<article class="card">
       <div class="card-head">${avatar(p)}<a href="#u/${esc(p.username)}"><b>${esc(p.display_name || p.username)}</b> keek</a><span class="when">${ago(l.created_at)}</span></div>
       <a class="card-body" href="${linkTo(typeOf(l), l.tmdb_id)}">
@@ -245,18 +249,97 @@
           ${l.review ? `<p class="review">${esc(l.review)}</p>` : ""}
         </div>
       </a>
+      <div class="feed-actions">
+        <button type="button" class="feed-action" data-act="feed-like" data-log="${esc(l.id)}" aria-pressed="${liked}">${liked ? "♥" : "♡"} <span data-like-count>${l.like_count || 0}</span></button>
+        <button type="button" class="feed-action" data-act="feed-comment-open" data-log="${esc(l.id)}">💬 <span>${comments.length}</span></button>
+        <button type="button" class="feed-action" data-act="feed-watchlist" data-log="${esc(l.id)}" data-tmdb="${esc(l.tmdb_id)}" data-type="${esc(l.media_type)}" data-title="${esc(l.title)}" data-year="${esc(l.year || "")}" data-poster="${esc(l.poster_path || "")}" aria-pressed="${inWatchlist}">${inWatchlist ? "✓ Kijklijst" : "+ Kijklijst"}</button>
+      </div>
+      <div class="feed-comments" id="feed-comments-${esc(l.id)}">
+        <div class="feed-comment-list">${comments.map((c) => `<div class="feed-comment"><b>${esc(c.display_name || c.username || "Gebruiker")}</b> ${esc(c.body)}</div>`).join("")}</div>
+        <form class="feed-comment-form" data-feed-comment data-log="${esc(l.id)}" hidden><input class="input" name="comment" maxlength="500" placeholder="Schrijf een reactie…" aria-label="Schrijf een reactie"><button class="btn small" type="submit">Plaats</button></form>
+      </div>
     </article>`;
   }
   async function viewFeed() {
     const ids = [S.me.id, ...(await followingIds())];
     const { data, error } = await sb.from("logs").select("*, profiles(username, display_name)").in("user_id", ids).order("created_at", { ascending: false }).limit(50);
     if (error) throw error;
+    const logIds = (data || []).map((l) => l.id);
+    S.feedLikes = new Set(); S.feedWatchlist = new Set(); S.feedComments = new Map();
+    if (logIds.length) {
+      const [likes, comments, watchlist] = await Promise.all([
+        sb.from("log_likes").select("log_id, user_id").in("log_id", logIds),
+        sb.from("log_comments").select("log_id, user_id, body, created_at").in("log_id", logIds).order("created_at", { ascending: true }),
+        sb.from("watchlist").select("media_type, tmdb_id").eq("user_id", S.me.id)
+      ]);
+      if (likes.error) throw likes.error;
+      if (comments.error) throw comments.error;
+      if (watchlist.error) throw watchlist.error;
+      const likeCounts = new Map();
+      for (const like of likes.data || []) {
+        likeCounts.set(String(like.log_id), (likeCounts.get(String(like.log_id)) || 0) + 1);
+        if (like.user_id === S.me.id) S.feedLikes.add(String(like.log_id));
+      }
+      const commenterIds = [...new Set((comments.data || []).map((c) => c.user_id))];
+      const { data: commenters, error: profileError } = commenterIds.length ? await sb.from("profiles").select("id, username, display_name").in("id", commenterIds) : { data: [], error: null };
+      if (profileError) throw profileError;
+      const commenterMap = new Map((commenters || []).map((u) => [u.id, u]));
+      for (const comment of comments.data || []) {
+        const key = String(comment.log_id);
+        if (!S.feedComments.has(key)) S.feedComments.set(key, []);
+        S.feedComments.get(key).push({ ...comment, ...(commenterMap.get(comment.user_id) || {}) });
+      }
+      S.feedWatchlist = new Set((watchlist.data || []).map((w) => `${w.media_type}:${w.tmdb_id}`));
+      for (const log of data || []) log.like_count = likeCounts.get(String(log.id)) || 0;
+    }
     const head = `<div class="row" style="justify-content:space-between;margin-bottom:16px"><div class="logo" style="font-size:34px">doekie<span>.</span></div><a class="btn small" href="#vrienden">Uitnodigen</a></div>`;
     if (!data.length) {
       return head + `<div class="empty"><h2 class="h2">Je feed is nog leeg</h2><p class="muted" style="margin:0">Log je eerste film of serie, of nodig vrienden uit. Dan zie je hier wat jullie kijken.</p>
         <div class="row wrap" style="justify-content:center"><a class="btn accent" href="#ontdek">Zoeken</a><a class="btn" href="#vrienden">Vrienden uitnodigen</a></div></div>`;
     }
     return head + `<div class="stack">${data.map(logCard).join("")}</div>`;
+  }
+  async function toggleFeedLike(btn) {
+    const logId = btn.dataset.log, liked = btn.getAttribute("aria-pressed") === "true";
+    btn.disabled = true;
+    const result = liked
+      ? await sb.from("log_likes").delete().eq("log_id", logId).eq("user_id", S.me.id)
+      : await sb.from("log_likes").insert({ log_id: logId, user_id: S.me.id });
+    btn.disabled = false;
+    if (result.error) return fail(result.error, "Like opslaan lukte niet.");
+    const count = Math.max(0, Number(btn.querySelector("[data-like-count]")?.textContent || 0) + (liked ? -1 : 1));
+    btn.setAttribute("aria-pressed", String(!liked));
+    btn.innerHTML = `${liked ? "♡" : "♥"} <span data-like-count>${count}</span>`;
+    toast(liked ? "Like verwijderd" : "Like gegeven");
+  }
+  async function toggleFeedWatchlist(btn) {
+    const key = `${btn.dataset.type}:${btn.dataset.tmdb}`;
+    btn.disabled = true;
+    const result = S.feedWatchlist.has(key)
+      ? await sb.from("watchlist").delete().eq("user_id", S.me.id).eq("media_type", btn.dataset.type).eq("tmdb_id", Number(btn.dataset.tmdb))
+      : await sb.from("watchlist").insert({ user_id: S.me.id, media_type: btn.dataset.type, tmdb_id: Number(btn.dataset.tmdb), title: btn.dataset.title, year: Number(btn.dataset.year) || null, poster_path: btn.dataset.poster || null });
+    btn.disabled = false;
+    if (result.error) return fail(result.error, "Kijklijst bijwerken lukte niet.");
+    if (S.feedWatchlist.has(key)) S.feedWatchlist.delete(key); else S.feedWatchlist.add(key);
+    const saved = S.feedWatchlist.has(key);
+    btn.setAttribute("aria-pressed", String(saved)); btn.textContent = saved ? "✓ Kijklijst" : "+ Kijklijst";
+    toast(saved ? "Op je kijklijst gezet" : "Van je kijklijst gehaald");
+  }
+  async function saveFeedComment(form) {
+    const logId = form.dataset.log, input = form.elements.comment, body = input.value.trim();
+    if (!body) return;
+    const submit = form.querySelector("button[type=submit]"); submit.disabled = true;
+    const { data, error } = await sb.from("log_comments").insert({ log_id: logId, user_id: S.me.id, body }).select("log_id, user_id, body, created_at").single();
+    submit.disabled = false;
+    if (error) return fail(error, "Reactie plaatsen lukte niet.");
+    const comment = { ...data, ...S.me };
+    if (!S.feedComments.has(String(logId))) S.feedComments.set(String(logId), []);
+    S.feedComments.get(String(logId)).push(comment);
+    const list = form.closest(".feed-comments").querySelector(".feed-comment-list");
+    list.insertAdjacentHTML("beforeend", `<div class="feed-comment"><b>${esc(S.me.display_name || S.me.username || "Jij")}</b> ${esc(body)}</div>`);
+    const commentButton = [...document.querySelectorAll('[data-act="feed-comment-open"]')].find((button) => button.dataset.log === String(logId))?.querySelector("span");
+    if (commentButton) commentButton.textContent = String(S.feedComments.get(String(logId)).length);
+    input.value = ""; toast("Reactie geplaatst");
   }
 
   // ---------- Ontdekken ----------
@@ -760,7 +843,7 @@
     ]);
     const L = logs.data || [];
     const previousTab = S.profile?.p?.id === p.id ? S.profile.tab : "dagboek";
-    S.profile = { p, isMe, logs: L, favorites: favorites.data || [], episodeProgress: episodes.data || [], watchlist: wl.data || [], tab: previousTab === "stats" ? "dagboek" : previousTab, following: !!amFollowing.data, seenQuery: "" };
+    S.profile = { p, isMe, logs: L, favorites: favorites.data || [], episodeProgress: episodes.data || [], watchlist: wl.data || [], tab: previousTab, following: !!amFollowing.data, seenQuery: "", statsHTML: null };
     const yr = String(new Date().getFullYear());
     return `
       <div class="row" style="justify-content:flex-end;min-height:44px">${isMe ? `<a class="x" href="#instellingen" aria-label="Instellingen">${icon.gear}</a>` : ""}</div>
@@ -772,13 +855,14 @@
         <div><b>${followers.count ?? 0}</b><span>volgers</span></div>
         <div><b>${following.count ?? 0}</b><span>volgend</span></div>
       </div>
-      <div class="seg profile-tabs" role="tablist" style="grid-template-columns:repeat(${isMe ? 3 : 2},minmax(0,1fr))">
-        ${[["dagboek", "Dagboek"], ...(isMe ? [["gezien", "Gekeken"]] : []), ["kijklijst", "Kijklijst"]].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
+      <div class="seg profile-tabs" role="tablist" style="grid-template-columns:repeat(${isMe ? 4 : 2},minmax(0,1fr))">
+        ${[["dagboek", "Dagboek"], ...(isMe ? [["gezien", "Gekeken"]] : []), ["kijklijst", "Kijklijst"], ...(isMe ? [["stats", "Statistieken"]] : [])].filter(([k]) => isMe || k !== "kijklijst").map(([k, n]) => `<button role="tab" data-act="ptab" data-t="${k}" aria-selected="${S.profile.tab === k}">${n}</button>`).join("")}
       </div>
       <div id="ptab-body" style="margin-top:12px">${profileTab()}</div>`;
   }
   function profileTab() {
     const P = S.profile;
+    if (P.tab === "stats") return P.statsHTML || `<div class="empty"><p class="muted" style="margin:0">Je statistieken laden…</p></div>`;
     if (P.tab === "gezien") {
       const unique = new Map();
       for (const l of P.logs) if (!unique.has(`${l.media_type}:${l.tmdb_id}`)) unique.set(`${l.media_type}:${l.tmdb_id}`, l);
@@ -810,6 +894,54 @@
         ${P.isMe ? `<button type="button" class="btn small diary-edit" data-act="edit-review" data-id="${esc(l.id)}">${l.review ? "Bewerk review" : "Review toevoegen"}</button>` : ""}
       </div>`).join("")
       : `<div class="empty"><p class="muted" style="margin:0">${P.isMe ? "Je hebt nog niets gelogd." : "Nog niets gelogd."}</p>${P.isMe ? '<a class="btn accent" href="#ontdek">Film of serie zoeken</a>' : ""}</div>`;
+  }
+  async function loadProfileStats() {
+    const P = S.profile;
+    if (!P?.isMe || P.statsHTML) return;
+    const unique = new Map();
+    for (const log of P.logs) unique.set(`${log.media_type}:${log.tmdb_id}`, log);
+    for (const ep of P.episodeProgress) {
+      const key = `tv:${ep.tmdb_id}`;
+      if (!unique.has(key)) unique.set(key, { media_type: "tv", tmdb_id: ep.tmdb_id, title: ep.series_title, poster_path: ep.poster_path });
+    }
+    const items = [...unique.values()];
+    const sampledItems = items.slice(0, 60), details = [];
+    for (let i = 0; i < sampledItems.length; i += 8) {
+      details.push(...await Promise.all(sampledItems.slice(i, i + 8).map((item) => tmdb(`${typeOf(item)}/${item.tmdb_id}`).catch(() => null))));
+    }
+    if (S.profile !== P) return;
+    const detailsByKey = new Map(sampledItems.map((item, index) => [`${typeOf(item)}:${item.tmdb_id}`, details[index]]).filter(([, detail]) => detail));
+    const movies = items.filter((item) => typeOf(item) === "movie");
+    const series = items.filter((item) => typeOf(item) === "tv");
+    const episodeTotal = P.episodeProgress.length;
+    let minutes = 0;
+    for (const movie of movies) {
+      const detail = detailsByKey.get(`movie:${movie.tmdb_id}`);
+      const views = P.logs.filter((l) => typeOf(l) === "movie" && Number(l.tmdb_id) === Number(movie.tmdb_id)).length;
+      if (detail?.runtime) minutes += Number(detail.runtime) * Math.max(1, views);
+    }
+    for (const seriesItem of series) {
+      const detail = detailsByKey.get(`tv:${seriesItem.tmdb_id}`);
+      const runtime = Number(detail?.episode_run_time?.[0] || detail?.last_episode_to_air?.runtime || 45);
+      const watchedEpisodes = P.episodeProgress.filter((ep) => Number(ep.tmdb_id) === Number(seriesItem.tmdb_id)).length;
+      minutes += runtime * watchedEpisodes;
+    }
+    const genreCounts = new Map();
+    for (const detail of details.filter(Boolean)) for (const genre of detail?.genres || []) genreCounts.set(genre.name, (genreCounts.get(genre.name) || 0) + 1);
+    const favoriteGenre = [...genreCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "Nog niet genoeg gegevens";
+    const rated = P.logs.filter((l) => l.rating != null);
+    const average = rated.length ? (rated.reduce((sum, log) => sum + Number(log.rating), 0) / rated.length).toFixed(1).replace(".", ",") : "–";
+    const hours = Math.floor(minutes / 60);
+    P.statsHTML = `<div class="stat-grid">
+      <div class="stat-card"><span class="muted">Films gekeken</span><b>${movies.length}</b></div>
+      <div class="stat-card"><span class="muted">Series gevolgd</span><b>${series.length}</b></div>
+      <div class="stat-card"><span class="muted">Afleveringen gezien</span><b>${episodeTotal}</b></div>
+      <div class="stat-card"><span class="muted">Geschatte kijktijd</span><b>${hours ? `${hours} uur` : `${minutes} min`}</b></div>
+      <div class="stat-card"><span class="muted">Jouw genre</span><b>${esc(favoriteGenre)}</b></div>
+      <div class="stat-card"><span class="muted">Gemiddelde beoordeling</span><b>★ ${average}</b></div>
+      <div class="stat-card"><span class="muted">Favorieten</span><b>${P.favorites.length}</b></div>
+    </div><p class="muted" style="font-size:12px;margin-top:10px">Kijktijd is een schatting op basis van filmlengtes en gemarkeerde afleveringen.</p>`;
+    const body = document.getElementById("ptab-body"); if (body && P.tab === "stats") body.innerHTML = P.statsHTML;
   }
   async function toggleFollow(btn) {
     const P = S.profile; btn.disabled = true;
@@ -939,7 +1071,10 @@
       case "toggle-rewatch": S.log.rewatch = !S.log.rewatch; renderLogSheet(); break;
       case "service": S.log.service = el.dataset.s; renderLogSheet(); break;
       case "save-log": saveLog(el); break;
-      case "ptab": S.profile.tab = el.dataset.t; S.profile.seenQuery = ""; document.querySelectorAll("[data-act=ptab]").forEach((b) => b.setAttribute("aria-selected", b === el)); document.getElementById("ptab-body").innerHTML = profileTab(); break;
+      case "ptab": S.profile.tab = el.dataset.t; S.profile.seenQuery = ""; document.querySelectorAll("[data-act=ptab]").forEach((b) => b.setAttribute("aria-selected", b === el)); document.getElementById("ptab-body").innerHTML = profileTab(); if (S.profile.tab === "stats") loadProfileStats(); break;
+      case "feed-like": toggleFeedLike(el); break;
+      case "feed-comment-open": { const form = [...document.querySelectorAll("[data-feed-comment]")].find((item) => item.dataset.log === el.dataset.log); if (form) { form.hidden = !form.hidden; if (!form.hidden) form.elements.comment.focus(); } break; }
+      case "feed-watchlist": toggleFeedWatchlist(el); break;
       case "follow": toggleFollow(el); break;
       case "share": share(); break;
       case "logout": await sb.auth.signOut(); location.hash = ""; break;
@@ -970,6 +1105,7 @@
   document.addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
+    if (f.matches("[data-feed-comment]")) { await saveFeedComment(f); return; }
     if (f.id === "login-form") {
       const email = document.getElementById("email").value.trim();
       const password = document.getElementById("password").value;
